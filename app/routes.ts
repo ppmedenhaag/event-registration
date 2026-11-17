@@ -16,6 +16,16 @@ export default [
     route("api/:op", "routes/scan/api.ts"),
   ]),
 
+  // Read-only aggregate dashboards for panitia viewers (served only by Workers with ENABLE_VIEWER="true"; own login, own cookie).
+  ...prefix("panitia", [
+    route("login", "routes/panitia/login.tsx"),
+    route("logout", "routes/panitia/logout.tsx"),
+    layout("routes/panitia/layout.tsx", [
+      index("routes/panitia/planning.tsx"),
+      route("hari-h", "routes/panitia/hari-h.tsx"),
+    ]),
+  ]),
+
   ...prefix("admin", [
     // Login/logout and the Google callback sit outside the protected layout.
     route("login", "routes/admin/login.tsx"),

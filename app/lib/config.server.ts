@@ -31,6 +31,8 @@ export interface AppEnv {
   ENABLE_CHECKIN?: string;
   /** Development only: skip the scanner login and act as this scanner (must exist in the scanners table). */
   DEV_SCANNER_EMAIL?: string;
+  /** Read-only panitia dashboards (/panitia). Fails closed: only "true" turns it on (and local development, unless "false"). */
+  ENABLE_VIEWER?: string;
 }
 
 /** Which parts of the app this Worker serves. Public and admin: anything other than the string "false" means on. */
@@ -42,6 +44,16 @@ export function featureEnabled(env: Pick<AppEnv, "ENABLE_PUBLIC" | "ENABLE_ADMIN
 export function checkinEnabled(env: Pick<AppEnv, "ENABLE_CHECKIN" | "APP_ENV">) {
   const v = env.ENABLE_CHECKIN?.trim().toLowerCase();
   return v === "true" || (env.APP_ENV === "development" && v !== "false");
+}
+
+/**
+ * The read-only panitia dashboards (/panitia) are opt-in (fails closed) and only ever served by a Worker that also
+ * serves /admin: the public and check-in Workers 404 them.
+ */
+export function viewerEnabled(env: Pick<AppEnv, "ENABLE_VIEWER" | "ENABLE_ADMIN" | "APP_ENV">) {
+  const v = env.ENABLE_VIEWER?.trim().toLowerCase();
+  const on = v === "true" || (env.APP_ENV === "development" && v !== "false");
+  return on && featureEnabled(env, "admin");
 }
 
 export function isDev(env: AppEnv) {

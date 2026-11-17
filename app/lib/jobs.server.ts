@@ -1,4 +1,5 @@
 import { anonymiseCheckinData } from "./checkin.server";
+import { purgeExpiredViewers } from "./viewers.server";
 import { auditStatement } from "./db.server";
 import { MAX_EMAIL_ATTEMPTS, deliverEmail, type EmailConfig, type EmailKind } from "./email/send.server";
 
@@ -144,6 +145,9 @@ export async function runDeadlineJob(db: D1Database, cfg: EmailConfig, now = new
   // Retention: the check-in log loses who/where 30 days after the event (idempotent, one cheap query otherwise).
   const anonymised = await anonymiseCheckinData(db, now);
   if (anonymised > 0) report.anonymised = anonymised;
+
+  // Retention: panitia viewer access ends at event end + 7 days; their rows, sessions and codes are deleted then.
+  await purgeExpiredViewers(db, now);
 
   return report;
 }

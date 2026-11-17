@@ -3,6 +3,7 @@ import { useFetcher } from "react-router";
 
 import type { Route } from "./+types/admins";
 import {
+  CheckIcon,
   EnvelopeIcon,
   InformationCircleIcon,
   ShieldCheckIcon,
@@ -10,6 +11,8 @@ import {
   UserIcon,
   UserMinusIcon,
   UserPlusIcon,
+  UsersIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { ActionButton, Notice, PageHeader, Panel } from "~/components/admin";
 import { TextField } from "~/components/forms";
@@ -17,23 +20,40 @@ import { Spinner, buttonClass } from "~/components/ui";
 import { handleAdminIntent } from "~/lib/admin-actions.server";
 import { adminEmailContext } from "~/lib/admin-context";
 import { listAdmins } from "~/lib/admins.server";
+import { emailConfig, viewerEnabled } from "~/lib/config.server";
 import { getAppEnv } from "~/lib/env.server";
 import { formatDateTime } from "~/lib/format";
+import { handleViewerIntent, listViewers, VIEWER_INTENTS } from "~/lib/viewers.server";
 
 export function meta() {
   return [{ title: "Kelola Admin – PPME Den Haag" }, { name: "robots", content: "noindex" }];
 }
 
 export async function loader({ context }: Route.LoaderArgs) {
-  return { admins: await listAdmins(getAppEnv().DB), me: context.get(adminEmailContext) };
+  const env = getAppEnv();
+  const showViewers = viewerEnabled(env);
+  return {
+    admins: await listAdmins(env.DB),
+    me: context.get(adminEmailContext),
+    showViewers,
+    viewers: showViewers ? await listViewers(env.DB) : [],
+  };
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
-  return handleAdminIntent(getAppEnv(), context.get(adminEmailContext), await request.formData());
+  const env = getAppEnv();
+  const actor = context.get(adminEmailContext);
+  const form = await request.formData();
+  // Panitia viewer requests (read-only dashboards) have their own handler; every other intent is unchanged.
+  if ((VIEWER_INTENTS as readonly string[]).includes(String(form.get("intent") ?? ""))) {
+    if (!viewerEnabled(env)) return { ok: false, message: "Ringkasan Panitia tidak aktif di server ini." };
+    return handleViewerIntent(env.DB, emailConfig(env), actor, form, new URL(request.url).origin);
+  }
+  return handleAdminIntent(env, actor, form);
 }
 
 export default function Admins({ loaderData }: Route.ComponentProps) {
-  const { admins, me } = loaderData;
+  const { admins, me, showViewers, viewers } = loaderData;
   const fetcher = useFetcher<{ ok: boolean; message: string }>();
   const formRef = useRef<HTMLFormElement>(null);
   const busy = fetcher.state !== "idle";
@@ -135,7 +155,85 @@ export default function Admins({ loaderData }: Route.ComponentProps) {
             Anda tidak dapat menghapus diri sendiri, dan admin terakhir tidak dapat dihapus.
           </p>
         </Panel>
+
+        {showViewers ? <ViewersPanel viewers={viewers} /> : null}
       </div>
     </div>
+  );
+}
+
+const VIEWER_STATUS = {
+  pending: { label: "Menunggu persetujuan", tone: "bg-amber-50 text-amber-800 ring-amber-200" },
+  approved: { label: "Disetujui", tone: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  rejected: { label: "Ditolak / dicabut", tone: "bg-slate-100 text-slate-600 ring-slate-200" },
+} as const;
+
+/** Panitia who asked for read-only access to /panitia (aggregate dashboards). Approve, revoke or delete here. */
+function ViewersPanel({ viewers }: { viewers: Route.ComponentProps["loaderData"]["viewers"] }) {
+  const pending = viewers.filter((v) => v.status === "pending").length;
+  return (
+    <Panel title={<>Akses Ringkasan Panitia (hanya-baca){pending ? <span className="ml-2 rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200 ring-inset">{pending} menunggu</span> : null}</>} icon={UsersIcon} flush>
+      <p className="border-b border-slate-100 px-4 py-3 text-xs text-slate-500 sm:px-5">
+        Panitia meminta akses lewat halaman <code>/panitia</code>. Yang disetujui hanya melihat jumlah dan komposisi peserta (perencanaan dan hari-H), tanpa nama,
+        kontak, pembayaran, atau tindakan apa pun. Akses berakhir otomatis sekitar seminggu setelah acara.
+      </p>
+      {viewers.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-slate-500 sm:px-5">Belum ada permintaan akses.</p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {viewers.map((v) => (
+            <li key={v.id} className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-4 sm:px-5">
+              <div className="min-w-[200px] flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-slate-900">{v.name}</span>
+                  <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${VIEWER_STATUS[v.status].tone}`}>{VIEWER_STATUS[v.status].label}</span>
+                </div>
+                <div className="text-sm break-all text-slate-600">{v.email}</div>
+                <div className="mt-0.5 text-xs text-slate-500">
+                  {v.section ? `${v.section} · ` : ""}diminta {formatDateTime(v.requested_at)}
+                  {v.decided_by ? ` · diputuskan oleh ${v.decided_by}` : ""}
+                  {v.status === "approved" ? ` · login terakhir ${v.last_login_at ? formatDateTime(v.last_login_at) : "belum pernah"}` : ""}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {v.status !== "approved" ? (
+                  <ActionButton intent="approve-viewer" label="Setujui" tone="primary" icon={CheckIcon} extra={{ viewerId: String(v.id) }} />
+                ) : null}
+                {v.status !== "rejected" ? (
+                  <ActionButton
+                    intent="reject-viewer"
+                    label={v.status === "approved" ? "Cabut akses" : "Tolak"}
+                    tone="neutral"
+                    icon={XMarkIcon}
+                    extra={{ viewerId: String(v.id) }}
+                    confirm={{
+                      title: v.status === "approved" ? "Cabut akses" : "Tolak permintaan",
+                      description: `${v.email} ${v.status === "approved" ? "tidak bisa lagi membuka Ringkasan Panitia dan sesinya berakhir sekarang." : "tidak akan mendapat akses."}`,
+                      confirmLabel: v.status === "approved" ? "Ya, cabut" : "Ya, tolak",
+                      tone: "danger",
+                      icon: UserMinusIcon,
+                    }}
+                  />
+                ) : null}
+                <ActionButton
+                  intent="delete-viewer"
+                  label="Hapus"
+                  tone="neutral"
+                  icon={TrashIcon}
+                  extra={{ viewerId: String(v.id) }}
+                  confirm={{
+                    title: "Hapus dari daftar",
+                    description: `Data ${v.email} dihapus dari daftar. Orang ini dapat meminta akses lagi.`,
+                    confirmLabel: "Ya, hapus",
+                    tone: "danger",
+                    icon: TrashIcon,
+                  }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
   );
 }
