@@ -260,6 +260,10 @@ function EmailStep({
       {loggedOut ? <Notice result={{ ok: true, message: "Anda telah keluar dari Ringkasan Panitia." }} /> : null}
       {error ? <Notice result={{ ok: false, message: error }} /> : null}
 
+      {google && !access ? (
+        <GoogleSignIn href="/admin/auth/google?realm=viewer" label="Masuk dengan Google" divider="atau dengan kode email" />
+      ) : null}
+
       <p className="text-[15px] leading-relaxed text-slate-600">
         {access ? (
           <>
@@ -271,10 +275,6 @@ function EmailStep({
           </>
         )}
       </p>
-
-      {google && !access ? (
-        <GoogleSignIn href="/admin/auth/google?realm=viewer" label="Masuk dengan Google" divider="atau dengan kode email" />
-      ) : null}
 
       <Form method="post" className="space-y-4">
         <input type="hidden" name="intent" value={access ? "access" : "request"} />

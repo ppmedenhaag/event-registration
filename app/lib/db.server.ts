@@ -34,6 +34,8 @@ export interface EventRow {
   /** Optional override of the check-in gate (UTC ISO). NULL = 1 h before start .. 1 h after end. */
   checkin_opens_at: string | null;
   checkin_closes_at: string | null;
+  /** 1 = the automatic data deletion (event end + 90 days) is paused by an admin. */
+  retention_hold: number;
   status: "draft" | "open" | "closed";
 }
 

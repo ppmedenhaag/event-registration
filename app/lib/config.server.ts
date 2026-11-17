@@ -16,6 +16,8 @@ export interface AppEnv {
   /** Origin of the PUBLIC Worker (form + "Pendaftaran saya"), e.g. https://event.ppmedenhaag.nl. Used for links in
    *  emails, which are also sent from the admin Worker and the cron, so it cannot come from the request. */
   PUBLIC_APP_URL?: string;
+  /** Origin of the ADMIN Worker (e.g. https://event-admin.ppmedenhaag.nl): links in emails to admins, which the cron also sends. */
+  ADMIN_APP_URL?: string;
   /** Seed list for the admins table (first run only). */
   ADMIN_EMAILS?: string;
   /** Optional Google sign-in on /admin/login: both must be set (client id = var, secret = `wrangler secret put`). */
@@ -68,6 +70,7 @@ export function emailConfig(env: AppEnv): EmailConfig {
     resendApiKey: env.RESEND_API_KEY,
     bank: bankInfo(env),
     publicUrl: env.PUBLIC_APP_URL?.trim().replace(/\/$/, "") || undefined,
+    adminUrl: env.ADMIN_APP_URL?.trim().replace(/\/$/, "") || undefined,
   };
 }
 

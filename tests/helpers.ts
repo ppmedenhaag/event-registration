@@ -43,11 +43,12 @@ export async function resetDb(db: D1Database, quotas: { member?: number; nonMemb
     db.prepare("DELETE FROM viewer_login_codes"),
     db.prepare("DELETE FROM checkin_log"),
     db.prepare("DELETE FROM revoked_tickets"),
+    db.prepare("DELETE FROM retention_log"),
     db.prepare("DELETE FROM escalation_contacts"),
     db.prepare("DELETE FROM participants"),
     db.prepare("DELETE FROM registrations"),
     db
-      .prepare("UPDATE events SET payment_counter = 0, quota_member = ?, quota_non_member = ?, checkin_enabled = 1, checkin_opens_at = NULL, checkin_closes_at = NULL")
+      .prepare("UPDATE events SET payment_counter = 0, retention_hold = 0, quota_member = ?, quota_non_member = ?, checkin_enabled = 1, checkin_opens_at = NULL, checkin_closes_at = NULL")
       .bind(quotas.member ?? 200, quotas.nonMember ?? 150),
   ]);
   return (await db.prepare("SELECT * FROM events LIMIT 1").first<EventRow>())!;

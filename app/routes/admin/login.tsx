@@ -210,11 +210,6 @@ function EmailStep({
       {loggedOut ? <Notice result={{ ok: true, message: "Anda telah keluar dari Dashboard Panitia." }} /> : null}
       {error ? <Notice result={{ ok: false, message: error }} /> : null}
 
-      <p className="text-[15px] leading-relaxed text-slate-600">
-        Masukkan email panitia Anda. Kami akan mengirimkan <span className="font-semibold text-slate-900">kode masuk 6 digit</span> ke
-        alamat tersebut.
-      </p>
-
       {google ? (
         <GoogleSignIn
           href={`/admin/auth/google${next === "/admin" ? "" : `?next=${encodeURIComponent(next)}`}`}
@@ -222,6 +217,11 @@ function EmailStep({
           divider="atau dengan kode email"
         />
       ) : null}
+
+      <p className="text-[15px] leading-relaxed text-slate-600">
+        Masukkan email panitia Anda. Kami akan mengirimkan <span className="font-semibold text-slate-900">kode masuk 6 digit</span> ke
+        alamat tersebut.
+      </p>
 
       <Form method="post" className="space-y-4">
         <input type="hidden" name="intent" value="request" />

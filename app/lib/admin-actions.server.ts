@@ -14,6 +14,7 @@ import {
   setScannerRole,
   updateCheckinGate,
 } from "./scanners.server";
+import { setRetentionHold } from "./retention.server";
 import { updateEventDetails, updateEventLocation, updateInfaqUrl, updateEventTimes, updateEventPrice, updateSelfAdd, updateQuotas, updateRegistrationWindow } from "./events.server";
 import { emailConfig, type AppEnv } from "./config.server";
 import { audit, getEventBySlug } from "./db.server";
@@ -166,6 +167,11 @@ export async function handleAdminIntent(env: AppEnv, actor: string, form: FormDa
       const event = await getEventBySlug(env.DB, env.DEFAULT_EVENT_SLUG ?? "");
       if (!event) return { ok: false, message: "Acara tidak ditemukan." };
       return updateSelfAdd(env.DB, actor, event.id, form.get("allowed") === "1");
+    }
+    case "save-retention-hold": {
+      const event = await getEventBySlug(env.DB, env.DEFAULT_EVENT_SLUG ?? "");
+      if (!event) return { ok: false, message: "Acara tidak ditemukan." };
+      return setRetentionHold(env.DB, actor, event.id, form.get("hold") === "1");
     }
     case "save-quotas": {
       const event = await getEventBySlug(env.DB, env.DEFAULT_EVENT_SLUG ?? "");
