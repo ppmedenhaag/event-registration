@@ -51,7 +51,7 @@ export function RegistrationTimeline({ data }: { data: { date: string; member: n
   const total = data.reduce((n, d) => n + d.member + d.nonMember, 0);
   return (
     <ChartBox height={260} label={`Pendaftaran harian: ${total} peserta dalam ${data.length} hari`}>
-      <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+      <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
         <XAxis
           dataKey="date"
@@ -61,7 +61,7 @@ export function RegistrationTimeline({ data }: { data: { date: string; member: n
           axisLine={{ stroke: "#cbd5e1" }}
           minTickGap={24}
         />
-        <YAxis allowDecimals={false} tick={AXIS} tickLine={false} axisLine={false} width={44} />
+        <YAxis allowDecimals={false} tick={AXIS} tickLine={false} axisLine={false} width={36} />
         <Tooltip labelFormatter={(k) => longDay.format(dayOf(String(k)))} contentStyle={tooltipStyle} />
         <Legend wrapperStyle={legendStyle} iconType="circle" />
         <Area
@@ -158,10 +158,10 @@ export function AgeGroupChart({ data }: { data: { group: string; member: number;
   const total = rows.reduce((n, d) => n + d.member + d.nonMember, 0);
   return (
     <ChartBox height={240} label={`Kelompok usia peserta: ${total} peserta`}>
-      <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+      <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
         <XAxis dataKey="label" tick={AXIS} tickLine={false} axisLine={{ stroke: "#cbd5e1" }} />
-        <YAxis allowDecimals={false} tick={AXIS} tickLine={false} axisLine={false} width={44} />
+        <YAxis allowDecimals={false} tick={AXIS} tickLine={false} axisLine={false} width={36} />
         <Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={tooltipStyle} />
         <Legend wrapperStyle={legendStyle} iconType="circle" />
         <Bar dataKey="member" name="Anggota" stackId="a" fill={MEMBER_COLOR} maxBarSize={56} isAnimationActive={false} />

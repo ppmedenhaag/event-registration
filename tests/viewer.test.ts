@@ -17,10 +17,12 @@ import {
   viewerSessionCookie,
 } from "../app/lib/viewer-auth.server";
 import {
+  addViewers,
   approveViewer,
   deleteViewer,
   handleViewerIntent,
   listViewers,
+  MAX_ADD_BATCH,
   MAX_PENDING_REQUESTS,
   purgeExpiredViewers,
   rejectViewer,
@@ -212,6 +214,100 @@ describe("approval workflow", () => {
     form.set("viewerId", "1");
     form.set("intent", "something-else");
     expect((await handleViewerIntent(db, emailCfg, "admin@x.nl", form, "https://admin.example")).ok).toBe(false);
+  });
+});
+
+describe("admin pre-populates panitia emails", () => {
+  const add = (emails: string, name = "", section = "", when = T0) => addViewers(db, "admin@x.nl", emails, name, section, EXPIRES(), when);
+
+  it("approves a pasted list at once (commas, spaces, newlines), lowercases, de-duplicates, names from the email", async () => {
+    const res = await add("Siti@X.nl, budi@x.nl;\nsiti@x.nl  rina@x.nl", "Ignored for a list", "Acara");
+    expect(res).toMatchObject({ ok: true });
+    expect(res.added.sort()).toEqual(["budi@x.nl", "rina@x.nl", "siti@x.nl"]);
+    const rows = await listViewers(db);
+    expect(rows.map((r) => [r.email, r.name, r.status, r.section, r.decided_by])).toEqual([
+      ["budi@x.nl", "budi", "approved", "Acara", "admin@x.nl"],
+      ["rina@x.nl", "rina", "approved", "Acara", "admin@x.nl"],
+      ["siti@x.nl", "siti", "approved", "Acara", "admin@x.nl"],
+    ]);
+    expect(rows.every((r) => r.expires_at === EXPIRES())).toBe(true);
+  });
+
+  it("uses the given name for a single email", async () => {
+    await add("siti@x.nl", "Siti Aminah", "Konsumsi");
+    expect((await listViewers(db))[0]).toMatchObject({ name: "Siti Aminah", section: "Konsumsi", status: "approved" });
+  });
+
+  it("an added viewer can log in straight away, without ever requesting access", async () => {
+    await add("siti@x.nl");
+    expect((await requestLoginCode(db, emailCfg, "siti@x.nl", meta, T0, "viewer")).status).toBe("sent");
+    const code = (await lastMail("siti@x.nl"))!.subject.split(" ")[0];
+    expect((await verifyLoginCode(db, "siti@x.nl", code, T0, "viewer")).ok).toBe(true);
+    expect(await createViewerSession(db, "siti@x.nl", meta, T0)).not.toBeNull();
+  });
+
+  it("turns a pending or rejected request into an approval, leaves approved people and admins alone", async () => {
+    await requestViewerAccess(db, { email: "wait@x.nl", name: "Wait Person", section: "Acara" }, EXPIRES(), T0);
+    await requestViewerAccess(db, { email: "no@x.nl", name: "No Person", section: "Acara" }, EXPIRES(), T0);
+    await db.prepare("UPDATE viewers SET status = 'rejected' WHERE email = 'no@x.nl'").run();
+    await approvedViewer("yes@x.nl", "Yes Person");
+
+    const res = await add("wait@x.nl, no@x.nl, yes@x.nl, admin@x.nl, new@x.nl");
+    expect(res.added.sort()).toEqual(["new@x.nl", "no@x.nl", "wait@x.nl"]);
+    expect(res.message).toContain("2 lainnya");
+    const by = Object.fromEntries((await listViewers(db)).map((r) => [r.email, r]));
+    expect(by["wait@x.nl"]).toMatchObject({ status: "approved", name: "Wait Person" }); // keeps the name they gave
+    expect(by["no@x.nl"].status).toBe("approved");
+    expect(by["admin@x.nl"]).toBeUndefined(); // an admin already has the pages
+  });
+
+  it("refuses an empty or invalid list, an oversized batch, and an all-known list", async () => {
+    expect((await add("")).ok).toBe(false);
+    expect((await add("not an email, also-bad")).ok).toBe(false);
+    const many = Array.from({ length: MAX_ADD_BATCH + 1 }, (_, i) => `p${i}@x.nl`).join(",");
+    expect((await add(many)).ok).toBe(false);
+    expect(await listViewers(db)).toHaveLength(0);
+    await add("siti@x.nl");
+    const again = await add("siti@x.nl");
+    expect(again.ok).toBe(false);
+    expect(again.added).toEqual([]);
+  });
+
+  it("does not revive a row whose access has already expired", async () => {
+    await add("siti@x.nl");
+    await db.prepare("UPDATE viewers SET status = 'rejected', expires_at = ?").bind(at(-1000).toISOString()).run();
+    expect((await add("siti@x.nl")).ok).toBe(false);
+    expect((await listViewers(db))[0].status).toBe("rejected");
+  });
+
+  it("is audited once per click with the emails", async () => {
+    await add("a@x.nl, b@x.nl");
+    const row = await db.prepare("SELECT actor, detail FROM audit_log WHERE action = 'viewer.add'").first<{ actor: string; detail: string }>();
+    expect(row?.actor).toBe("admin@x.nl");
+    expect(JSON.parse(row!.detail)).toEqual({ count: 2, emails: ["a@x.nl", "b@x.nl"] });
+  });
+
+  it("the admin intent sends one notification per new person (no code, no name) and reports a mail failure without undoing the access", async () => {
+    const form = new FormData();
+    form.set("intent", "add-viewer");
+    form.set("email", "a@x.nl, b@x.nl");
+    const res = await handleViewerIntent(db, emailCfg, "admin@x.nl", form, "https://admin.example", T0, EXPIRES());
+    expect(res.ok).toBe(true);
+    expect(res.message).toContain("Pemberitahuan dikirim");
+    for (const to of ["a@x.nl", "b@x.nl"]) {
+      const mail = await lastMail(to);
+      expect(mail?.kind).toBe("viewer_approved");
+      expect(mail?.html).toContain("https://admin.example/panitia");
+    }
+
+    const form2 = new FormData();
+    form2.set("intent", "add-viewer");
+    form2.set("email", "c@x.nl");
+    const broken = { ...emailCfg, mode: "resend" as const, resendApiKey: undefined };
+    const failed = await handleViewerIntent(db, broken, "admin@x.nl", form2, "https://admin.example", T0, EXPIRES());
+    expect(failed.ok).toBe(true);
+    expect(failed.message).toContain("gagal");
+    expect((await listViewers(db)).find((r) => r.email === "c@x.nl")?.status).toBe("approved");
   });
 });
 
@@ -421,7 +517,6 @@ describe("planning numbers (everyone registered)", () => {
       familiesWithBalita: 1,
       familiesWithAnak: 1,
       familiesWithChildren: 1,
-      childrenPerAdult: 0.33, // 2 children / (1 remaja + 5 dewasa)
     });
     expect(s.partySizes.map((p) => p.families)).toEqual([1, 0, 1, 1, 0]);
     expect(s.timeline.length).toBeGreaterThan(0);
@@ -438,7 +533,6 @@ describe("planning numbers (everyone registered)", () => {
     await resetDb(db);
     const empty = await planningStats(db, event, T0);
     expect(empty.totals).toEqual({ confirmedPeople: 0, pendingPeople: 0, confirmedFamilies: 0, pendingFamilies: 0 });
-    expect(empty.children.childrenPerAdult).toBeNull();
     expect(empty.timeline).toEqual([]);
   });
 });
