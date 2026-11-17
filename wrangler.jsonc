@@ -127,7 +127,7 @@
 				"ADMIN_EMAILS": "",
 				// Google sign-in: fill in the OAuth client id and set the GOOGLE_CLIENT_SECRET secret on this Worker.
 				// Authorised redirect URI: https://ppme-registration-admin.ppme-registration.workers.dev/admin/auth/google/callback
-				"GOOGLE_CLIENT_ID": ""
+				"GOOGLE_CLIENT_ID": "1020586774946-lv51gau441o25kdv3qqk42sn9gbfj0r5.apps.googleusercontent.com"
 			}
 		},
 
@@ -163,7 +163,7 @@
 		},
 
 		// ---- PRODUCTION-ADMIN: admin (scanner later) on https://event-admin.ppmedenhaag.nl, app login, same D1 as `production`, no cron.
-		// Secrets: TURNSTILE_SECRET, RESEND_API_KEY [+ GOOGLE_CLIENT_SECRET]. Google redirect URI: https://event-admin.ppmedenhaag.nl/admin/auth/google/callback
+		// Secrets: TURNSTILE_SECRET, RESEND_API_KEY [+ GOOGLE_CLIENT_SECRET]. Google redirect URI: https://event-admin.ppmedenhaag.nl/admin/auth/google/callback (admin + /panitia). The check-in Worker needs its own: https://event-checkin.ppmedenhaag.nl/scan/auth/google/callback
 		"production-admin": {
 			"name": "ppme-event-admin",
 			"workers_dev": false,
@@ -192,7 +192,7 @@
 				"EMAIL_FROM": "Panitia Kajian PPME Den Haag <event@ppmedenhaag.nl>",
 				"EMAIL_REPLY_TO": "event@ppmedenhaag.nl",
 				"ADMIN_EMAILS": "",
-				"GOOGLE_CLIENT_ID": ""
+				"GOOGLE_CLIENT_ID": "1020586774946-lv51gau441o25kdv3qqk42sn9gbfj0r5.apps.googleusercontent.com"
 			}
 		},
 
@@ -227,7 +227,7 @@
 				"EMAIL_FROM": "Panitia Kajian PPME Den Haag <event@ppmedenhaag.nl>",
 				"EMAIL_REPLY_TO": "event@ppmedenhaag.nl",
 				"ADMIN_EMAILS": "",
-				"GOOGLE_CLIENT_ID": ""
+				"GOOGLE_CLIENT_ID": "1020586774946-lv51gau441o25kdv3qqk42sn9gbfj0r5.apps.googleusercontent.com"
 			}
 		},
 
@@ -266,7 +266,7 @@
 				"EMAIL_FROM": "Panitia Kajian PPME Den Haag <event@ppmedenhaag.nl>",
 				"EMAIL_REPLY_TO": "event@ppmedenhaag.nl",
 				"ADMIN_EMAILS": "",
-				"GOOGLE_CLIENT_ID": ""
+				"GOOGLE_CLIENT_ID": "1020586774946-lv51gau441o25kdv3qqk42sn9gbfj0r5.apps.googleusercontent.com"
 			}
 		}
 	}

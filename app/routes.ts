@@ -3,6 +3,10 @@ import { type RouteConfig, index, layout, prefix, route } from "@react-router/de
 export default [
   index("routes/home.tsx"),
   route("e/:slug", "routes/register.tsx"),
+
+  // Public legal pages: served by EVERY Worker (public, admin and check-in), no login, no data.
+  route("privacy", "routes/privacy.tsx"),
+  route("terms", "routes/terms.tsx"),
   route("e/:slug/pendaftaran-saya", "routes/my-registration.tsx"),
 
   // Check-in app for the scanning team (served only by the check-in Worker, ENABLE_CHECKIN="true"; everything else 404s).
@@ -10,6 +14,8 @@ export default [
     index("routes/scan/app.tsx"),
     route("login", "routes/scan/login.tsx"),
     route("logout", "routes/scan/logout.tsx"),
+    route("auth/google", "routes/scan/auth-google.tsx"),
+    route("auth/google/callback", "routes/scan/auth-google-callback.tsx"),
     route("offline", "routes/scan/offline.tsx"),
     route("manifest.webmanifest", "routes/scan/manifest.ts"),
     route("sw.js", "routes/scan/sw.ts"),

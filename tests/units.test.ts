@@ -9,7 +9,7 @@ import {
   sessionCookie,
 } from "../app/lib/auth.server";
 import { countryName, describeDevice } from "../app/lib/email/login-code";
-import { googleConfig } from "../app/lib/google-oauth.server";
+import { finishGoogleLogin, googleConfig, startGoogleLogin } from "../app/lib/google-oauth.server";
 import { generateCode, normalizeCode } from "../app/lib/login-codes.server";
 import { bankConfigured, featureEnabled } from "../app/lib/config.server";
 import { buildTimeline } from "../app/lib/admin.server";
@@ -163,6 +163,65 @@ describe("admin login helpers", () => {
     expect(googleConfig({})).toBeNull();
     expect(googleConfig({ GOOGLE_CLIENT_ID: "id" })).toBeNull();
     expect(googleConfig({ GOOGLE_CLIENT_ID: " id ", GOOGLE_CLIENT_SECRET: "s" })).toEqual({ clientId: "id", clientSecret: "s" });
+  });
+
+  describe("Google sign-in realms", () => {
+    const cfg = { clientId: "id", clientSecret: "s" };
+    const start = async (origin: string, realm: "admin" | "viewer" | "scanner") => {
+      const res = await startGoogleLogin(new Request(`${origin}/x`), cfg, "/admin/registrations", realm);
+      const cookie = res.headers.get("Set-Cookie") ?? "";
+      const loc = new URL(res.headers.get("Location") ?? "");
+      return { cookie, loc, state: loc.searchParams.get("state") ?? "" };
+    };
+    const callback = (origin: string, path: string, cookie: string, state: string) =>
+      new Request(`${origin}${path}?code=c&state=${state}`, { headers: { Cookie: cookie.split(";")[0] } });
+
+    it("sends admin and panitia through the admin callback, scanners through their own", async () => {
+      const admin = await start("https://admin.example", "admin");
+      const viewer = await start("https://admin.example", "viewer");
+      const scanner = await start("https://scan.example", "scanner");
+      expect(admin.loc.searchParams.get("redirect_uri")).toBe("https://admin.example/admin/auth/google/callback");
+      expect(viewer.loc.searchParams.get("redirect_uri")).toBe("https://admin.example/admin/auth/google/callback");
+      expect(scanner.loc.searchParams.get("redirect_uri")).toBe("https://scan.example/scan/auth/google/callback");
+      expect(viewer.cookie).toContain("Path=/admin/auth/google");
+      expect(scanner.cookie).toContain("Path=/scan/auth/google");
+    });
+
+    it("refuses a flow that belongs to the other host (no token exchange attempted)", async () => {
+      const fetcher = (() => {
+        throw new Error("must not call Google");
+      }) as unknown as typeof fetch;
+      const scanner = await start("https://scan.example", "scanner");
+      const onAdmin = await finishGoogleLogin(
+        callback("https://scan.example", "/admin/auth/google/callback", scanner.cookie, scanner.state),
+        new URL(`https://scan.example/admin/auth/google/callback?code=c&state=${scanner.state}`),
+        cfg,
+        fetcher,
+        "admin",
+      );
+      expect(onAdmin).toMatchObject({ ok: false, error: "state" });
+      expect(onAdmin.ok === false && onAdmin.realm).toBeUndefined();
+
+      const viewer = await start("https://admin.example", "viewer");
+      const onScanner = await finishGoogleLogin(
+        callback("https://admin.example", "/scan/auth/google/callback", viewer.cookie, viewer.state),
+        new URL(`https://admin.example/scan/auth/google/callback?code=c&state=${viewer.state}`),
+        cfg,
+        fetcher,
+        "scanner",
+      );
+      expect(onScanner).toMatchObject({ ok: false, error: "state" });
+    });
+
+    it("reports the realm on a cancelled flow so the person returns to their own login page", async () => {
+      const viewer = await start("https://admin.example", "viewer");
+      const res = await finishGoogleLogin(
+        new Request("https://admin.example/admin/auth/google/callback?error=access_denied", { headers: { Cookie: viewer.cookie.split(";")[0] } }),
+        new URL("https://admin.example/admin/auth/google/callback?error=access_denied"),
+        cfg,
+      );
+      expect(res).toEqual({ ok: false, error: "cancelled", realm: "viewer" });
+    });
   });
 
   it("describes the requesting device and country for the email", () => {
