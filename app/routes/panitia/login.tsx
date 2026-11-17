@@ -44,6 +44,7 @@ export async function loader({ request, url }: Route.LoaderArgs) {
   return {
     turnstileSiteKey: env.TURNSTILE_SITE_KEY?.trim() ?? "",
     loggedOut: url.searchParams.has("out"),
+    startInAccess: url.searchParams.get("mode") === "access",
     devLog: isDev(env) && env.EMAIL_MODE !== "resend",
     validMinutes: CODE_TTL_MS / 60_000,
     cooldownSeconds: Math.round(CODE_COOLDOWN_MS / 1000),
@@ -53,7 +54,7 @@ export async function loader({ request, url }: Route.LoaderArgs) {
 type ActionData =
   | { step: "email"; mode: "login" | "access"; email: string; error: string }
   | { step: "code"; email: string; sentAt: number; resent?: boolean; error?: string }
-  | { step: "access_done" };
+  | { step: "access_done"; email: string };
 
 const TURNSTILE_ERROR = "Verifikasi keamanan gagal atau kedaluwarsa. Silakan selesaikan verifikasi lalu coba lagi.";
 
@@ -111,7 +112,10 @@ export async function action({ request, url }: Route.ActionArgs) {
     }
     const event = await getEventBySlug(env.DB, env.DEFAULT_EVENT_SLUG ?? "");
     if (event) await requestViewerAccess(env.DB, checked.value, viewerExpiry(event));
-    return data<ActionData>({ step: "access_done" });
+    // Someone who is already approved and clicked "Minta akses" by mistake gets a login code instead. For everybody else
+    // this sends nothing (the viewer realm only mails approved, unexpired viewers), and the screen is identical either way.
+    await requestLoginCode(env.DB, emailConfig(env), checked.value.email, { ...requestMeta(request), appOrigin: url.origin }, new Date(), "viewer");
+    return data<ActionData>({ step: "access_done", email: checked.value.email });
   }
 
   throw data("Permintaan tidak dikenal.", { status: 400 });
@@ -119,9 +123,12 @@ export async function action({ request, url }: Route.ActionArgs) {
 
 export default function PanitiaLogin({ loaderData }: Route.ComponentProps) {
   const actionData = useActionData<ActionData>();
-  const [mode, setMode] = useState<"login" | "access">("login");
-  const code = actionData?.step === "code" ? actionData : null;
-  const done = actionData?.step === "access_done";
+  const [mode, setMode] = useState<"login" | "access">(loaderData.startInAccess ? "access" : "login");
+  const [haveCode, setHaveCode] = useState<number | null>(null);
+  const accessDone = actionData?.step === "access_done" ? actionData : null;
+  // After "Minta akses" the visitor may already hold a code (approved people get one): offer the code box without revealing anything.
+  const code = actionData?.step === "code" ? actionData : accessDone && haveCode ? { email: accessDone.email, sentAt: haveCode, resent: false, error: undefined } : null;
+  const done = !!accessDone && !haveCode;
   const emailErr = actionData?.step === "email" ? actionData : null;
   const activeMode = emailErr ? emailErr.mode : mode;
 
@@ -161,10 +168,15 @@ export default function PanitiaLogin({ loaderData }: Route.ComponentProps) {
                   result={{
                     ok: true,
                     message:
-                      "Permintaan diterima. Admin akan meninjaunya; setelah disetujui Anda dapat masuk dengan kode yang dikirim ke email Anda.",
+                      "Permintaan diterima. Admin akan meninjaunya dan Anda akan diberi tahu lewat email setelah disetujui.",
                   }}
                 />
-                <p className="text-sm text-slate-500">Anda tidak perlu mengirim permintaan lagi. Tidak ada email yang dikirim sebelum disetujui.</p>
+                <p className="text-sm text-slate-500">
+                  Anda tidak perlu mengirim permintaan lagi. Jika email ini ternyata sudah disetujui, kode masuk dikirim ke emailnya sekarang.
+                </p>
+                <button type="button" onClick={() => setHaveCode(Date.now())} className={buttonClass("secondary", "md", "w-full")}>
+                  Sudah menerima kode? Masukkan di sini
+                </button>
               </div>
             ) : (
               <EmailStep
@@ -323,7 +335,14 @@ function CodeStep({
           Jika <span className="font-semibold break-all text-slate-900">{email}</span> sudah disetujui, kode masuk telah dikirim ke alamat tersebut.
           Kode berlaku {validMinutes} menit.
         </p>
-        <p className="text-slate-500">Tidak ada di kotak masuk? Periksa folder spam atau promosi. Belum disetujui? Minta akses dulu.</p>
+        <p className="text-slate-500">Tidak ada di kotak masuk? Periksa folder spam atau promosi.</p>
+        <p className="font-medium text-slate-700">
+          Tidak ada email dalam 1 menit? Kemungkinan besar email Anda belum disetujui.{" "}
+          <a href="/panitia/login?mode=access" className="text-brand underline hover:text-brand-dark">
+            Minta akses dulu
+          </a>
+          .
+        </p>
       </Callout>
 
       {resent && !error ? <Notice result={{ ok: true, message: "Kode baru telah diminta. Kode sebelumnya tidak berlaku lagi." }} /> : null}
