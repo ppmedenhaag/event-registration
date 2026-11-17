@@ -14,11 +14,11 @@ import { auditStatement } from "./db.server";
 /**
  * Sessions for the read-only panitia dashboards (/panitia). Same design as the admin and scanner sessions: a random
  * 256-bit token in an HttpOnly cookie, only its SHA-256 in `viewer_sessions`. Own cookie and own table, so a viewer
- * cookie is never recognised by the admin middleware (and the other way round). 24 hours, absolute, and never longer
+ * cookie is never recognised by the admin middleware (and the other way round). 3 days (no personal data is visible, so fewer re-logins), absolute, and never longer
  * than the viewer's own `expires_at` (event end + 7 days). Authorization = an APPROVED, not expired row in `viewers`,
  * joined on every request: revoking a viewer ends their access on the next request. Fails closed.
  */
-export const VIEWER_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+export const VIEWER_SESSION_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
 const COOKIE_SECURE = "__Host-ppme_view";
 /** Plain-http development (localhost) cannot use the __Host- prefix, which requires Secure. */

@@ -398,7 +398,7 @@ describe("viewer login and session", () => {
     }
   });
 
-  it("the session lasts 24 hours, never longer than the viewer's own expiry", async () => {
+  it("the session lasts 3 days, never longer than the viewer's own expiry", async () => {
     await approvedViewer();
     const s = await login();
     expect(Date.parse(s.expiresAt) - T0.getTime()).toBe(VIEWER_SESSION_TTL_MS);

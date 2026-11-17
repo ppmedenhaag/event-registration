@@ -198,7 +198,7 @@ export default function PanitiaLogin({ loaderData }: Route.ComponentProps) {
 
           <footer className="flex items-start gap-2.5 border-t border-slate-200/80 bg-slate-50/70 px-6 py-4 text-xs leading-relaxed text-slate-500 sm:px-8">
             <LockClosedIcon className="mt-px size-4 shrink-0 text-slate-400" aria-hidden="true" />
-            <p>Khusus panitia Kajian PPME Den Haag. Halaman ini hanya-baca dan hanya menampilkan jumlah peserta, tanpa data pribadi.</p>
+            <p>Khusus panitia Kajian PPME Den Haag. Halaman ini hanya-baca dan hanya menampilkan jumlah peserta, tanpa data pribadi. Setelah masuk, sesi berlaku 3 hari di perangkat ini.</p>
           </footer>
         </div>
       </main>
