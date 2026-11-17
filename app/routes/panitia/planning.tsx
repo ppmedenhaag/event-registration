@@ -71,15 +71,14 @@ export default function Planning({ loaderData }: Route.ComponentProps) {
           <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-slate-200/80 bg-slate-200/80">
             <Mini label="Balita" value={c.balita.confirmed + c.balita.pending} sub={`${c.balita.confirmed} pasti · ${c.balita.pending} menunggu`} />
             <Mini label="Anak" value={c.anak.confirmed + c.anak.pending} sub={`${c.anak.confirmed} pasti · ${c.anak.pending} menunggu`} />
-            <Mini label="Keluarga dengan balita" value={c.familiesWithBalita} sub="kebutuhan ruang menyusui / kereta bayi" />
-            <Mini label="Keluarga dengan anak" value={c.familiesWithAnak} sub="usia sekolah dasar" />
+            <Mini label="Keluarga dengan balita" value={c.familiesWithBalita} />
+            <Mini label="Keluarga dengan anak" value={c.familiesWithAnak} />
           </dl>
           <p className="mt-4 text-sm text-slate-600">
             Total anak (balita + anak): <strong className="text-slate-900">{kidsConfirmed + kidsPending}</strong>
             {kidsPending > 0 ? ` (${kidsConfirmed} pasti, ${kidsPending} menunggu)` : ""}
             {" · "}
-            {c.familiesWithChildren} keluarga membawa anak
-            {c.childrenPerAdult !== null ? <> · rata-rata {String(c.childrenPerAdult).replace(".", ",")} anak per remaja/dewasa</> : null}.
+            {c.familiesWithChildren} keluarga membawa anak.
           </p>
           <p className="mt-2 text-xs text-slate-500">
             Balita dan anak tidak memakai kuota kursi. Gunakan angka &quot;pasti + menunggu&quot; sebagai batas atas perencanaan.

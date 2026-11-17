@@ -137,10 +137,10 @@ function ArrivalChart({ data }: { data: { time: string; n: number; total: number
     <div role="img" aria-label={`Kedatangan per 15 menit, total ${total} orang`} style={{ height: 240 }} className="w-full">
       {mounted ? (
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+          <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="time" tick={{ fontSize: 12, fill: "#64748b" }} tickLine={false} axisLine={{ stroke: "#cbd5e1" }} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} tickLine={false} axisLine={false} width={44} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} tickLine={false} axisLine={false} width={36} />
             <Tooltip
               contentStyle={{ borderRadius: 6, border: "1px solid #e2e8f0", fontSize: 13, boxShadow: "none" }}
               formatter={(value, name) => [String(value), name === "n" ? "Datang (15 menit)" : "Total hadir"]}

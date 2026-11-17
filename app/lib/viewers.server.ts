@@ -1,4 +1,4 @@
-import { normalizeEmail } from "./admins.server";
+import { normalizeEmail, parseEmailList } from "./admins.server";
 import { auditStatement } from "./db.server";
 import { viewerApprovedEmail } from "./email/viewer-access";
 import { sendDirectEmail, type EmailConfig } from "./email/send.server";
@@ -160,7 +160,53 @@ export async function purgeExpiredViewers(db: D1Database, now = new Date()): Pro
 }
 
 /** Admin intents of the viewer section (kept out of handleAdminIntent so the live admin actions stay untouched). */
-export const VIEWER_INTENTS = ["approve-viewer", "reject-viewer", "delete-viewer"] as const;
+export const VIEWER_INTENTS = ["add-viewer", "approve-viewer", "reject-viewer", "delete-viewer"] as const;
+
+/** At most this many emails per "add" click (a pasted list of the committee; keeps one request small). */
+export const MAX_ADD_BATCH = 30;
+
+/**
+ * An admin adds panitia emails up front: they are approved at once, no request needed. Existing pending or rejected rows
+ * become approved; people who are already approved, and admins (who already have the pages), are left alone.
+ * `name` and `section` are optional; without a name the part before the @ is used. Returns who is newly approved.
+ */
+export async function addViewers(
+  db: D1Database,
+  actor: string,
+  emailsRaw: string,
+  nameRaw: string,
+  sectionRaw: string,
+  expiresAt: string,
+  now = new Date(),
+): Promise<ViewerResult & { added: string[] }> {
+  const emails = parseEmailList(emailsRaw);
+  if (emails.length === 0) return { ok: false, message: "Masukkan minimal satu alamat email yang valid.", added: [] };
+  if (emails.length > MAX_ADD_BATCH) return { ok: false, message: `Maksimal ${MAX_ADD_BATCH} email sekali tambah.`, added: [] };
+  const nowIso = now.toISOString();
+  const name = clean(nameRaw, 80);
+  const section = clean(sectionRaw, 60) || null;
+  const who = normalizeEmail(actor);
+
+  const added: string[] = [];
+  let already = 0;
+  for (const email of emails) {
+    const res = await db
+      .prepare(
+        `INSERT INTO viewers (email, name, section, status, requested_at, decided_by, decided_at, expires_at)
+         SELECT ?1, ?2, ?3, 'approved', ?4, ?5, ?4, ?6 WHERE NOT EXISTS (SELECT 1 FROM admins WHERE email = ?1)
+         ON CONFLICT (email) DO UPDATE SET status = 'approved', decided_by = excluded.decided_by, decided_at = excluded.decided_at
+         WHERE viewers.status <> 'approved' AND viewers.expires_at > ?4`,
+      )
+      .bind(email, (emails.length === 1 && name) || email.split("@")[0].slice(0, 80), section, nowIso, who, expiresAt)
+      .run();
+    if ((res.meta.changes ?? 0) === 1) added.push(email);
+    else already++;
+  }
+  if (added.length) await auditStatement(db, actor, "viewer.add", null, { count: added.length, emails: added }, nowIso).run();
+  if (added.length === 0) return { ok: false, message: "Semua email itu sudah punya akses (atau sudah admin).", added };
+  const skipped = already ? ` ${already} lainnya sudah punya akses.` : "";
+  return { ok: true, message: `${added.length} email ditambahkan dan disetujui.${skipped}`, added };
+}
 
 export async function handleViewerIntent(
   db: D1Database,
@@ -169,8 +215,25 @@ export async function handleViewerIntent(
   form: FormData,
   appOrigin: string,
   now = new Date(),
+  expiresAt = new Date(now.getTime() + 60 * 86_400_000).toISOString(),
 ): Promise<ViewerResult> {
   const intent = String(form.get("intent") ?? "");
+  if (intent === "add-viewer") {
+    const res = await addViewers(db, actor, String(form.get("email") ?? ""), String(form.get("name") ?? ""), String(form.get("section") ?? ""), expiresAt, now);
+    if (!res.ok) return res;
+    let failed = 0;
+    for (const to of res.added) {
+      // Best effort, like a single approval: the access is already saved.
+      try {
+        const mail = viewerApprovedEmail({ appOrigin, replyTo: cfg.replyTo });
+        await sendDirectEmail(db, cfg, { to, ...mail, attachments: [] }, { kind: "viewer_approved", idempotencyKey: `viewer-added:${to}:${now.getTime()}` });
+      } catch (err) {
+        failed++;
+        console.error(`viewer added email for ${to} failed: ${String((err as Error)?.message ?? err).slice(0, 200)}`);
+      }
+    }
+    return { ok: true, message: failed ? `${res.message} ${failed} email pemberitahuan gagal terkirim; beri tahu orangnya langsung.` : `${res.message} Pemberitahuan dikirim.` };
+  }
   const id = Number(form.get("viewerId"));
   if (!Number.isInteger(id) || id <= 0) return { ok: false, message: "Permintaan tidak ditemukan." };
   switch (intent) {

@@ -3,6 +3,7 @@ import { useFetcher } from "react-router";
 
 import type { Route } from "./+types/admins";
 import {
+  BriefcaseIcon,
   CheckIcon,
   EnvelopeIcon,
   InformationCircleIcon,
@@ -23,7 +24,8 @@ import { listAdmins } from "~/lib/admins.server";
 import { emailConfig, viewerEnabled } from "~/lib/config.server";
 import { getAppEnv } from "~/lib/env.server";
 import { formatDateTime } from "~/lib/format";
-import { handleViewerIntent, listViewers, VIEWER_INTENTS } from "~/lib/viewers.server";
+import { getEventBySlug } from "~/lib/db.server";
+import { handleViewerIntent, listViewers, VIEWER_INTENTS, viewerExpiry } from "~/lib/viewers.server";
 
 export function meta() {
   return [{ title: "Kelola Admin – PPME Den Haag" }, { name: "robots", content: "noindex" }];
@@ -47,7 +49,9 @@ export async function action({ request, context }: Route.ActionArgs) {
   // Panitia viewer requests (read-only dashboards) have their own handler; every other intent is unchanged.
   if ((VIEWER_INTENTS as readonly string[]).includes(String(form.get("intent") ?? ""))) {
     if (!viewerEnabled(env)) return { ok: false, message: "Ringkasan Panitia tidak aktif di server ini." };
-    return handleViewerIntent(env.DB, emailConfig(env), actor, form, new URL(request.url).origin);
+    const event = await getEventBySlug(env.DB, env.DEFAULT_EVENT_SLUG ?? "");
+    if (!event) return { ok: false, message: "Acara tidak ditemukan." };
+    return handleViewerIntent(env.DB, emailConfig(env), actor, form, new URL(request.url).origin, new Date(), viewerExpiry(event));
   }
   return handleAdminIntent(env, actor, form);
 }
@@ -171,12 +175,48 @@ const VIEWER_STATUS = {
 /** Panitia who asked for read-only access to /panitia (aggregate dashboards). Approve, revoke or delete here. */
 function ViewersPanel({ viewers }: { viewers: Route.ComponentProps["loaderData"]["viewers"] }) {
   const pending = viewers.filter((v) => v.status === "pending").length;
+  const fetcher = useFetcher<{ ok: boolean; message: string }>();
+  const formRef = useRef<HTMLFormElement>(null);
+  const busy = fetcher.state !== "idle";
+  useEffect(() => {
+    if (fetcher.data?.ok) formRef.current?.reset();
+  }, [fetcher.data]);
   return (
     <Panel title={<>Akses Ringkasan Panitia (hanya-baca){pending ? <span className="ml-2 rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200 ring-inset">{pending} menunggu</span> : null}</>} icon={UsersIcon} flush>
       <p className="border-b border-slate-100 px-4 py-3 text-xs text-slate-500 sm:px-5">
         Panitia meminta akses lewat halaman <code>/panitia</code>. Yang disetujui hanya melihat jumlah dan komposisi peserta (perencanaan dan hari-H), tanpa nama,
         kontak, pembayaran, atau tindakan apa pun. Akses berakhir otomatis sekitar seminggu setelah acara.
       </p>
+      <div className="border-b border-slate-100 px-4 py-4 sm:px-5">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <UserPlusIcon className="size-4 text-brand" aria-hidden="true" />
+          Tambah panitia (langsung disetujui)
+        </h3>
+        <fetcher.Form ref={formRef} method="post" className="grid gap-3 lg:grid-cols-[2fr_1fr_1fr_auto] lg:items-end">
+          <input type="hidden" name="intent" value="add-viewer" />
+          <TextField
+            name="email"
+            type="text"
+            inputMode="email"
+            label="Email (satu atau beberapa, pisahkan dengan koma)"
+            icon={EnvelopeIcon}
+            required
+            autoComplete="off"
+            placeholder="nama@email.com, nama2@email.com"
+          />
+          <TextField name="name" label="Nama (opsional, 1 email)" icon={UserIcon} maxLength={80} autoComplete="off" placeholder="Nama panitia" />
+          <TextField name="section" label="Seksi (opsional)" icon={BriefcaseIcon} maxLength={60} autoComplete="off" placeholder="mis. Konsumsi" />
+          <button type="submit" disabled={busy} className={buttonClass("primary", "md")}>
+            {busy ? <Spinner /> : <UserPlusIcon className="size-4" aria-hidden="true" />}
+            {busy ? "Menyimpan…" : "Tambah"}
+          </button>
+        </fetcher.Form>
+        <Notice result={fetcher.data} className="mt-3" />
+        <p className="mt-3 flex items-start gap-2 text-xs text-slate-500">
+          <InformationCircleIcon className="size-4 shrink-0" aria-hidden="true" />
+          Mereka tidak perlu meminta akses: setelah ditambahkan, cukup buka <code>/panitia</code> dan masuk dengan kode email. Pemberitahuan dikirim ke emailnya.
+        </p>
+      </div>
       {viewers.length === 0 ? (
         <p className="px-4 py-6 text-sm text-slate-500 sm:px-5">Belum ada permintaan akses.</p>
       ) : (

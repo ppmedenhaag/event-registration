@@ -50,7 +50,6 @@ export interface PlanningStats {
     familiesWithAnak: number;
     familiesWithChildren: number;
     /** (balita + anak) per remaja/dewasa, rounded to 2 decimals; null when there are no adults/teens yet. */
-    childrenPerAdult: number | null;
   };
   partySizes: { label: string; families: number }[];
   timeline: { date: string; member: number; nonMember: number }[];
@@ -134,8 +133,6 @@ export async function planningStats(db: D1Database, event: EventRow, now = new D
   }
 
   const age = (g: string) => ageGroups.find((x) => x.group === g)!;
-  const kids = age("balita").confirmed + age("balita").pending + age("anak").confirmed + age("anak").pending;
-  const grownUps = age("remaja").confirmed + age("remaja").pending + age("dewasa").confirmed + age("dewasa").pending;
 
   return {
     asOf: nowIso,
@@ -152,7 +149,6 @@ export async function planningStats(db: D1Database, event: EventRow, now = new D
       familiesWithBalita: withBalita,
       familiesWithAnak: withAnak,
       familiesWithChildren: withChildren,
-      childrenPerAdult: grownUps > 0 ? Math.round((kids / grownUps) * 100) / 100 : null,
     },
     partySizes: sizes.map((families, i) => ({ label: i === 4 ? "5+" : String(i + 1), families })),
     timeline: buildTimeline(regRows.results, now),
