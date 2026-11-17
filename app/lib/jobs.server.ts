@@ -1,5 +1,6 @@
 import { anonymiseCheckinData } from "./checkin.server";
 import { purgeExpiredViewers } from "./viewers.server";
+import { runRetention, type RetentionReport } from "./retention.server";
 import { auditStatement } from "./db.server";
 import { MAX_EMAIL_ATTEMPTS, deliverEmail, type EmailConfig, type EmailKind } from "./email/send.server";
 
@@ -11,6 +12,8 @@ export interface JobReport {
   deferred: number;
   /** Check-in log rows anonymised (event end + 30 days); only present when something happened. */
   anonymised?: number;
+  /** Automatic data deletion (event end + 90 days): warnings sent / data purged; only present when something happened. */
+  retention?: RetentionReport;
 }
 
 /**
@@ -148,6 +151,16 @@ export async function runDeadlineJob(db: D1Database, cfg: EmailConfig, now = new
 
   // Retention: panitia viewer access ends at event end + 7 days; their rows, sessions and codes are deleted then.
   await purgeExpiredViewers(db, now);
+
+  // Retention: warn admins, then delete the personal data of an event 90 days after it ended (see retention.server.ts).
+  // Isolated on purpose: a problem here must never stop registrations, payments or emails from being processed.
+  try {
+    const retention = await runRetention(db, cfg, now);
+    if (retention.warned.length || retention.purged.length || retention.blocked.length) report.retention = retention;
+    for (const b of retention.blocked) console.error("retention blocked:", b);
+  } catch (err) {
+    console.error("retention run failed:", String((err as Error)?.message ?? err).slice(0, 300));
+  }
 
   return report;
 }

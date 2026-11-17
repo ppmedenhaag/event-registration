@@ -16,6 +16,7 @@ import { Form, data, redirect, useActionData, useNavigation } from "react-router
 import type { Route } from "./+types/login";
 import { Notice } from "~/components/admin";
 import { inputClass, TextField } from "~/components/forms";
+import { GoogleSignIn } from "~/components/GoogleSignIn";
 import { Turnstile } from "~/components/Turnstile";
 import { Backdrop, buttonClass, Callout, Eyebrow, Logo, Spinner } from "~/components/ui";
 import { normalizeEmail } from "~/lib/admins.server";
@@ -23,6 +24,7 @@ import { isSameOrigin, requestMeta } from "~/lib/auth.server";
 import { emailConfig, isDev, viewerEnabled } from "~/lib/config.server";
 import { getEventBySlug } from "~/lib/db.server";
 import { getAppEnv } from "~/lib/env.server";
+import { googleConfig } from "~/lib/google-oauth.server";
 import { CODE_COOLDOWN_MS, CODE_TTL_MS, isValidEmail, requestLoginCode, verifyLoginCode } from "~/lib/login-codes.server";
 import { verifyTurnstile } from "~/lib/turnstile.server";
 import { createViewerSession, identifyPanitia, viewerSessionCookie } from "~/lib/viewer-auth.server";
@@ -38,11 +40,22 @@ function gate() {
   return env;
 }
 
+const GOOGLE_ERRORS: Record<string, string> = {
+  google_cancelled: "Masuk dengan Google dibatalkan.",
+  google_state: "Sesi masuk dengan Google sudah kedaluwarsa. Silakan coba lagi.",
+  google_exchange: "Google tidak dapat memverifikasi permintaan ini. Silakan coba lagi.",
+  google_token: "Tanda masuk dari Google tidak valid. Silakan coba lagi.",
+  google_unverified: "Alamat email akun Google ini belum terverifikasi oleh Google.",
+  google_not_viewer: "Akun Google ini belum disetujui untuk Ringkasan Panitia. Gunakan tab \"Minta akses\" jika belum mengajukan.",
+};
+
 export async function loader({ request, url }: Route.LoaderArgs) {
   const env = gate();
   if (await identifyPanitia(request, env)) throw redirect("/panitia");
   return {
     turnstileSiteKey: env.TURNSTILE_SITE_KEY?.trim() ?? "",
+    google: googleConfig(env) !== null,
+    googleError: GOOGLE_ERRORS[url.searchParams.get("error") ?? ""] ?? null,
     loggedOut: url.searchParams.has("out"),
     startInAccess: url.searchParams.get("mode") === "access",
     devLog: isDev(env) && env.EMAIL_MODE !== "resend",
@@ -184,7 +197,8 @@ export default function PanitiaLogin({ loaderData }: Route.ComponentProps) {
                 mode={activeMode}
                 onMode={setMode}
                 defaultEmail={emailErr?.email ?? ""}
-                error={emailErr?.error ?? null}
+                error={emailErr?.error ?? loaderData.googleError}
+                google={loaderData.google}
                 loggedOut={loaderData.loggedOut && !actionData}
                 siteKey={loaderData.turnstileSiteKey}
               />
@@ -198,7 +212,7 @@ export default function PanitiaLogin({ loaderData }: Route.ComponentProps) {
 
           <footer className="flex items-start gap-2.5 border-t border-slate-200/80 bg-slate-50/70 px-6 py-4 text-xs leading-relaxed text-slate-500 sm:px-8">
             <LockClosedIcon className="mt-px size-4 shrink-0 text-slate-400" aria-hidden="true" />
-            <p>Khusus panitia Kajian PPME Den Haag. Halaman ini hanya-baca dan hanya menampilkan jumlah peserta, tanpa data pribadi. Setelah masuk, sesi berlaku 3 hari di perangkat ini.</p>
+            <p>Khusus panitia Kajian PPME Den Haag. Halaman ini hanya-baca dan hanya menampilkan jumlah peserta, tanpa data pribadi. Setelah masuk, sesi berlaku 3 hari di perangkat ini. <span className="mt-1 block"><a href="/privacy" className="underline hover:text-slate-700">Kebijakan Privasi</a> · <a href="/terms" className="underline hover:text-slate-700">Ketentuan Layanan</a></span></p>
           </footer>
         </div>
       </main>
@@ -226,6 +240,7 @@ function EmailStep({
   onMode,
   defaultEmail,
   error,
+  google,
   loggedOut,
   siteKey,
 }: {
@@ -233,6 +248,7 @@ function EmailStep({
   onMode: (m: "login" | "access") => void;
   defaultEmail: string;
   error: string | null;
+  google: boolean;
   loggedOut: boolean;
   siteKey: string;
 }) {
@@ -243,6 +259,10 @@ function EmailStep({
     <div className="space-y-6">
       {loggedOut ? <Notice result={{ ok: true, message: "Anda telah keluar dari Ringkasan Panitia." }} /> : null}
       {error ? <Notice result={{ ok: false, message: error }} /> : null}
+
+      {google && !access ? (
+        <GoogleSignIn href="/admin/auth/google?realm=viewer" label="Masuk dengan Google" divider="atau dengan kode email" />
+      ) : null}
 
       <p className="text-[15px] leading-relaxed text-slate-600">
         {access ? (

@@ -58,6 +58,7 @@ export async function createScannerSession(
   emailRaw: string,
   meta: Pick<RequestMeta, "ip" | "userAgent">,
   now = new Date(),
+  method: "pin" | "google" = "pin",
 ): Promise<{ token: string; expiresAt: string } | null> {
   const email = normalizeEmail(emailRaw);
   const token = randomToken();
@@ -68,9 +69,9 @@ export async function createScannerSession(
     db
       .prepare(
         `INSERT INTO scanner_sessions (token_hash, scanner_id, method, created_at, expires_at, ip, user_agent, device_label)
-         SELECT ?, id, 'pin', ?, ?, ?, ?, ? FROM scanners WHERE email = ? AND active = 1`,
+         SELECT ?, id, ?, ?, ?, ?, ?, ? FROM scanners WHERE email = ? AND active = 1`,
       )
-      .bind(await sha256Hex(token), nowIso, expiresAt, meta.ip, meta.userAgent, describeDevice(meta.userAgent), email),
+      .bind(await sha256Hex(token), method, nowIso, expiresAt, meta.ip, meta.userAgent, describeDevice(meta.userAgent), email),
     db.prepare("DELETE FROM scanner_sessions WHERE expires_at <= ?").bind(nowIso),
     db.prepare("DELETE FROM scanner_login_codes WHERE created_at <= ?").bind(new Date(now.getTime() - 86_400_000).toISOString()),
     db.prepare("UPDATE scanners SET last_login_at = ? WHERE email = ? AND active = 1").bind(nowIso, email),

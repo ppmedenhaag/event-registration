@@ -55,6 +55,8 @@
 		// One-time seed (comma-separated emails), kept empty in git: set it as a secret (`wrangler secret put ADMIN_EMAILS --env <env>`) or in .dev.vars. Only used to fill the `admins` table while it is empty. After that admins are managed in /admin/admins.
 		"ADMIN_EMAILS": "",
 		// Optional Google sign-in on /admin/login (needs the GOOGLE_CLIENT_SECRET secret too; empty = PIN only).
+		// Origin of the admin Worker: links in the data-retention emails to admins (the cron runs on the public Worker).
+		"ADMIN_APP_URL": "http://localhost:5173",
 		"GOOGLE_CLIENT_ID": ""
 	},
 
@@ -88,6 +90,8 @@
 				"EMAIL_FROM": "Panitia Kajian PPME Den Haag <event@ppmedenhaag.nl>",
 				"EMAIL_REPLY_TO": "event@ppmedenhaag.nl",
 				"ADMIN_EMAILS": "",
+				// Origin of the admin Worker: links in the data-retention emails to admins (the cron runs on the public Worker).
+				"ADMIN_APP_URL": "https://ppme-registration-admin.ppme-registration.workers.dev",
 				"GOOGLE_CLIENT_ID": ""
 			}
 		},
@@ -127,7 +131,9 @@
 				"ADMIN_EMAILS": "",
 				// Google sign-in: fill in the OAuth client id and set the GOOGLE_CLIENT_SECRET secret on this Worker.
 				// Authorised redirect URI: https://ppme-registration-admin.ppme-registration.workers.dev/admin/auth/google/callback
-				"GOOGLE_CLIENT_ID": ""
+				// Origin of the admin Worker: links in the data-retention emails to admins (the cron runs on the public Worker).
+				"ADMIN_APP_URL": "https://ppme-registration-admin.ppme-registration.workers.dev",
+				"GOOGLE_CLIENT_ID": "1020586774946-lv51gau441o25kdv3qqk42sn9gbfj0r5.apps.googleusercontent.com"
 			}
 		},
 
@@ -158,12 +164,14 @@
 				"EMAIL_FROM": "Panitia Kajian PPME Den Haag <event@ppmedenhaag.nl>",
 				"EMAIL_REPLY_TO": "event@ppmedenhaag.nl",
 				"ADMIN_EMAILS": "",
+				// Origin of the admin Worker: links in the data-retention emails to admins (the cron runs on the public Worker).
+				"ADMIN_APP_URL": "https://event-admin.ppmedenhaag.nl",
 				"GOOGLE_CLIENT_ID": ""
 			}
 		},
 
 		// ---- PRODUCTION-ADMIN: admin (scanner later) on https://event-admin.ppmedenhaag.nl, app login, same D1 as `production`, no cron.
-		// Secrets: TURNSTILE_SECRET, RESEND_API_KEY [+ GOOGLE_CLIENT_SECRET]. Google redirect URI: https://event-admin.ppmedenhaag.nl/admin/auth/google/callback
+		// Secrets: TURNSTILE_SECRET, RESEND_API_KEY [+ GOOGLE_CLIENT_SECRET]. Google redirect URI: https://event-admin.ppmedenhaag.nl/admin/auth/google/callback (admin + /panitia). The check-in Worker needs its own: https://event-checkin.ppmedenhaag.nl/scan/auth/google/callback
 		"production-admin": {
 			"name": "ppme-event-admin",
 			"workers_dev": false,
@@ -192,7 +200,9 @@
 				"EMAIL_FROM": "Panitia Kajian PPME Den Haag <event@ppmedenhaag.nl>",
 				"EMAIL_REPLY_TO": "event@ppmedenhaag.nl",
 				"ADMIN_EMAILS": "",
-				"GOOGLE_CLIENT_ID": ""
+				// Origin of the admin Worker: links in the data-retention emails to admins (the cron runs on the public Worker).
+				"ADMIN_APP_URL": "https://event-admin.ppmedenhaag.nl",
+				"GOOGLE_CLIENT_ID": "1020586774946-lv51gau441o25kdv3qqk42sn9gbfj0r5.apps.googleusercontent.com"
 			}
 		},
 
@@ -227,7 +237,9 @@
 				"EMAIL_FROM": "Panitia Kajian PPME Den Haag <event@ppmedenhaag.nl>",
 				"EMAIL_REPLY_TO": "event@ppmedenhaag.nl",
 				"ADMIN_EMAILS": "",
-				"GOOGLE_CLIENT_ID": ""
+				// Origin of the admin Worker: links in the data-retention emails to admins (the cron runs on the public Worker).
+				"ADMIN_APP_URL": "https://ppme-registration-admin.ppme-registration.workers.dev",
+				"GOOGLE_CLIENT_ID": "1020586774946-lv51gau441o25kdv3qqk42sn9gbfj0r5.apps.googleusercontent.com"
 			}
 		},
 
@@ -266,7 +278,9 @@
 				"EMAIL_FROM": "Panitia Kajian PPME Den Haag <event@ppmedenhaag.nl>",
 				"EMAIL_REPLY_TO": "event@ppmedenhaag.nl",
 				"ADMIN_EMAILS": "",
-				"GOOGLE_CLIENT_ID": ""
+				// Origin of the admin Worker: links in the data-retention emails to admins (the cron runs on the public Worker).
+				"ADMIN_APP_URL": "https://event-admin.ppmedenhaag.nl",
+				"GOOGLE_CLIENT_ID": "1020586774946-lv51gau441o25kdv3qqk42sn9gbfj0r5.apps.googleusercontent.com"
 			}
 		}
 	}

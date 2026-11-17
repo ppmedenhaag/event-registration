@@ -6,6 +6,8 @@ import {
   ArrowUturnLeftIcon,
   BanknotesIcon,
   CheckCircleIcon,
+  DocumentArrowDownIcon,
+  TrashIcon,
   ExclamationTriangleIcon,
   HeartIcon,
   ClockIcon,
@@ -29,6 +31,7 @@ import { getEventBySlug } from "~/lib/db.server";
 import { getAppEnv } from "~/lib/env.server";
 import { MAX_QUOTA, formatDateTime, formatEuro, utcIsoToLocalInput } from "~/lib/format";
 import { quotaSummary, registrationWindowError } from "~/lib/registration.server";
+import { RETENTION_DAYS, retentionStatus, type RetentionStatus } from "~/lib/retention.server";
 
 export function meta() {
   return [{ title: "Pengaturan Acara – PPME Den Haag" }, { name: "robots", content: "noindex" }];
@@ -39,8 +42,11 @@ export async function loader() {
   const event = await getEventBySlug(env.DB, env.DEFAULT_EVENT_SLUG ?? "");
   if (!event) throw new Response("Acara tidak ditemukan.", { status: 404 });
   const quota = await quotaSummary(env.DB, event);
+  const retention = await retentionStatus(env.DB, event);
   return {
     quota,
+    retention,
+    retentionDays: RETENTION_DAYS,
     title: event.title,
     speaker: event.speaker ?? "",
     theme: event.theme ?? "",
@@ -68,7 +74,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 }
 
 export default function Settings({ loaderData }: Route.ComponentProps) {
-  const { title, speaker, theme, locationName, locationAddress, locationMapUrl, infaqUrl, startsAt, startsAtLocal, endsAtLocal, opensAt, nonMemberOpensAt, closesAt, closesAtUtc, nonMemberOpensAtUtc, state, price, priceCents, quota, selfAdd } = loaderData;
+  const { title, speaker, theme, locationName, locationAddress, locationMapUrl, infaqUrl, startsAt, startsAtLocal, endsAtLocal, opensAt, nonMemberOpensAt, closesAt, closesAtUtc, nonMemberOpensAtUtc, state, price, priceCents, quota, selfAdd, retention, retentionDays } = loaderData;
   const fetcher = useFetcher<{ ok: boolean; message: string }>();
   const timesFetcher = useFetcher<{ ok: boolean; message: string }>();
   const timesBusy = timesFetcher.state !== "idle";
@@ -292,6 +298,12 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
           <Hint icon={InformationCircleIcon}>Setiap perubahan dicatat di audit log.</Hint>
         </ul>
       </Panel>
+
+      <div id="retensi" className="mt-6 scroll-mt-24">
+        <Panel title="Retensi data (pengingat penghapusan)" icon={TrashIcon}>
+          <RetentionPanel status={retention} days={retentionDays} />
+        </Panel>
+      </div>
     </div>
   );
 }
@@ -302,6 +314,108 @@ function Hint({ icon: Icon, children }: { icon: typeof ClockIcon; children: Reac
       <Icon className="size-4 shrink-0 text-slate-400" aria-hidden="true" />
       <span>{children}</span>
     </li>
+  );
+}
+
+function RetentionPanel({ status, days }: { status: RetentionStatus; days: number }) {
+  const fetcher = useFetcher<{ ok: boolean; message: string }>();
+  const pending = fetcher.formData ? fetcher.formData.get("hold") === "1" : null;
+  const hold = pending ?? status.hold;
+  const { counts, purged, warnings, decision, overdue } = status;
+  const dueText = status.dueIso ? formatDateTime(status.dueIso) : "";
+  const nothingLeft = counts.registrations === 0;
+
+  let tone: "success" | "warning" | "info" = "info";
+  let headline = "";
+  if (purged || nothingLeft) {
+    tone = "success";
+    headline = "Tidak ada data peserta yang tersisa. Tidak ada yang perlu dihapus.";
+  } else if (hold) {
+    tone = "warning";
+    headline = "Pengingat penghapusan DIJEDA. Tidak ada email pengingat sampai jeda dimatikan.";
+  } else if (!status.dueIso) {
+    tone = "warning";
+    headline = "Tanggal selesai acara tidak valid, jadi pengingat tidak berjalan. Perbaiki di Waktu acara.";
+  } else if (overdue) {
+    tone = "warning";
+    headline = `Batas penghapusan (${dueText}) sudah lewat. Hapus data peserta sekarang; pengingat diulang tiap 7 hari sampai semuanya terhapus.`;
+  } else if (decision?.action === "warn") {
+    headline = "Email pengingat ke semua admin akan dikirim pada pengecekan otomatis berikutnya.";
+  } else {
+    headline = `Batas penghapusan: ${dueText} waktu Belanda (${days} hari setelah acara selesai). Admin menghapus datanya sendiri; sistem hanya mengirim pengingat.`;
+  }
+
+  return (
+    <>
+      <Callout tone={tone} icon={tone === "success" ? CheckCircleIcon : tone === "warning" ? ExclamationTriangleIcon : InformationCircleIcon} className="mb-6">
+        <p className="font-semibold">{headline}</p>
+      </Callout>
+
+      <dl className="mb-6 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Batas penghapusan</dt>
+          <dd className="mt-0.5 text-slate-900">{dueText || "–"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Masih tersimpan</dt>
+          <dd className="mt-0.5 text-slate-900 tabular-nums">
+            {counts.registrations} pendaftaran, {counts.participants} peserta
+          </dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Pengingat ke admin yang sudah terkirim</dt>
+          <dd className="mt-0.5 text-slate-900">
+            {warnings.length
+              ? warnings
+                  .map((w) => `${w.stage === "w30" ? "30 hari" : w.stage === "w7" ? "7 hari" : "1 hari"} sebelum / terakhir (${formatDateTime(w.at)}, ${w.sent} penerima)`)
+                  .join(" · ")
+              : "Belum ada. Pengingat dikirim 30, 7, dan 1 hari sebelum batas, lalu tiap 7 hari setelah batas lewat."}
+          </dd>
+        </div>
+      </dl>
+
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900">{hold ? "Pengingat dijeda" : "Jeda pengingat"}</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Aktifkan hanya jika ada sengketa atau insiden keamanan yang belum selesai dan datanya harus disimpan dulu. Setelah
+            dimatikan, pengingat dilanjutkan.
+          </p>
+        </div>
+        <Switch
+          checked={hold}
+          disabled={fetcher.state !== "idle"}
+          onChange={(v) => fetcher.submit({ intent: "save-retention-hold", hold: v ? "1" : "0" }, { method: "post" })}
+          aria-label="Jeda pengingat penghapusan data"
+          className="group relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border border-slate-300 bg-slate-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:opacity-60 data-checked:border-brand data-checked:bg-brand"
+        >
+          <span className="pointer-events-none inline-block size-5 translate-x-0.5 translate-y-px rounded-full bg-white shadow transition-transform group-data-checked:translate-x-5" />
+        </Switch>
+      </div>
+      <Notice result={fetcher.data} className="mt-4" />
+      <div className="mt-5 flex flex-wrap gap-2">
+        <a href="/admin/export" className={buttonClass("secondary", "md", "w-full sm:w-auto")}>
+          <DocumentArrowDownIcon className="size-4" aria-hidden="true" />
+          Unduh ekspor (CSV)
+        </a>
+        <a href="/admin/registrations" className={buttonClass("secondary", "md", "w-full sm:w-auto")}>
+          <TrashIcon className="size-4" aria-hidden="true" />
+          Buka daftar pendaftaran
+        </a>
+      </div>
+
+      <ul className="mt-6 space-y-2 border-t border-slate-100 pt-5 text-xs text-slate-500">
+        <Hint icon={TrashIcon}>
+          Sesuai Kebijakan Privasi, data pribadi peserta dihapus paling lambat {days} hari setelah acara selesai. Sistem TIDAK menghapus
+          apa pun otomatis: admin membuka tiap pendaftaran dan klik Hapus (menghapus juga pesertanya dan log emailnya; tidak dapat
+          dibatalkan; yang sudah check-in tidak bisa dihapus).
+        </Hint>
+        <Hint icon={InformationCircleIcon}>
+          Unduh ekspor CSV dulu jika datanya masih dibutuhkan. Pengingat dikirim ke semua admin dan berhenti sendiri setelah tidak ada pendaftaran tersisa.
+        </Hint>
+        <Hint icon={InformationCircleIcon}>Setiap perubahan dicatat di audit log.</Hint>
+      </ul>
+    </>
   );
 }
 

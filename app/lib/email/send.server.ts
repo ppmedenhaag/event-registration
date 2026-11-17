@@ -24,6 +24,8 @@ export interface EmailConfig {
   bank: BankInfo;
   /** Public origin for links in emails ("Pendaftaran saya"); links are left out when unset. */
   publicUrl?: string;
+  /** Admin origin for buttons in emails to admins (retention warnings); the buttons are left out when unset. */
+  adminUrl?: string;
 }
 
 export interface Attachment {

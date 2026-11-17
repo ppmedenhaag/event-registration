@@ -360,7 +360,15 @@ export function RegistrationForm({
             PPME Den Haag memproses data di formulir ini hanya untuk pendaftaran, pembayaran, tiket, dan check-in acara
             ini. Data disimpan di layanan Cloudflare (Uni Eropa) dan email dikirim melalui Resend. Data peserta dihapus
             atau dianonimkan paling lambat 90 hari setelah acara; catatan pembayaran disimpan sesuai kewajiban
-            pembukuan. Anda dapat meminta akses, koreksi, atau penghapusan data melalui email panitia.
+            pembukuan. Anda dapat meminta akses, koreksi, atau penghapusan data melalui email panitia.{" "}
+            <a href="/privacy" target="_blank" rel="noopener" className="font-medium text-brand underline hover:text-brand-dark">
+              Baca Kebijakan Privasi
+            </a>{" "}
+            dan{" "}
+            <a href="/terms" target="_blank" rel="noopener" className="font-medium text-brand underline hover:text-brand-dark">
+              Ketentuan Layanan
+            </a>
+            .
           </p>
           <div className="mt-5 space-y-4 border-t border-slate-200/80 pt-5">
             <div>

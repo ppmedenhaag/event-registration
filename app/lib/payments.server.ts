@@ -236,8 +236,8 @@ export async function deleteRegistration(
   const reg = await getRegistration(db, registrationId);
   if (!reg) return { ok: false, message: "Pendaftaran tidak ditemukan." };
   const logged = `EXISTS (SELECT 1 FROM audit_log WHERE at = ? AND actor = ? AND action = 'registration.delete' AND target = ?)`;
+  // No name here on purpose (data minimisation): the audit log must not keep the personal data this delete removes.
   const detail = JSON.stringify({
-    name: reg.registrant_name,
     status: reg.status,
     people: reg.people,
     member: !!reg.is_member,

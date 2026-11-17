@@ -14,12 +14,14 @@ import { Form, Link, data, redirect, useActionData, useNavigation } from "react-
 import type { Route } from "./+types/login";
 import { Notice } from "~/components/admin";
 import { inputClass, TextField } from "~/components/forms";
+import { GoogleSignIn } from "~/components/GoogleSignIn";
 import { LangProvider, LangSwitch, useT } from "~/components/scanner/lang";
 import { Turnstile } from "~/components/Turnstile";
 import { Backdrop, buttonClass, Callout, Eyebrow, Logo, Spinner } from "~/components/ui";
 import { normalizeEmail } from "~/lib/admins.server";
 import { isSameOrigin, requestMeta } from "~/lib/auth.server";
 import { emailConfig, isDev } from "~/lib/config.server";
+import { googleConfig } from "~/lib/google-oauth.server";
 import { CODE_COOLDOWN_MS, CODE_TTL_MS, isValidEmail, requestLoginCode, verifyLoginCode } from "~/lib/login-codes.server";
 import { createScannerSession, identifyScanner, scannerSessionCookie } from "~/lib/scanner-auth.server";
 import { scannerEnv } from "~/lib/scanner-guard.server";
@@ -43,12 +45,23 @@ export function links() {
   ];
 }
 
+const GOOGLE_ERRORS: Record<string, TextKey> = {
+  google_cancelled: "errGoogleCancelled",
+  google_state: "errGoogleFailed",
+  google_exchange: "errGoogleFailed",
+  google_token: "errGoogleFailed",
+  google_unverified: "errGoogleUnverified",
+  google_not_scanner: "errNotScanner",
+};
+
 export async function loader({ request, url }: Route.LoaderArgs) {
   const env = scannerEnv();
   if (await identifyScanner(request, env)) throw redirect("/scan");
   return {
     lang: detectLang(request.headers.get("Cookie"), request.headers.get("Accept-Language")),
     turnstileSiteKey: env.TURNSTILE_SITE_KEY?.trim() ?? "",
+    google: googleConfig(env) !== null,
+    googleError: GOOGLE_ERRORS[url.searchParams.get("error") ?? ""] ?? null,
     loggedOut: url.searchParams.has("out"),
     devLog: isDev(env) && env.EMAIL_MODE !== "resend",
     validMinutes: CODE_TTL_MS / 60_000,
@@ -157,7 +170,8 @@ function LoginScreen({ loaderData }: { loaderData: Route.ComponentProps["loaderD
             ) : (
               <EmailStep
                 defaultEmail={actionData?.email ?? ""}
-                error={actionData?.step === "email" ? actionData.error : null}
+                error={actionData?.step === "email" ? actionData.error : loaderData.googleError}
+                google={loaderData.google}
                 loggedOut={loaderData.loggedOut && !actionData}
                 siteKey={loaderData.turnstileSiteKey}
               />
@@ -171,7 +185,10 @@ function LoginScreen({ loaderData }: { loaderData: Route.ComponentProps["loaderD
 
           <footer className="flex items-start gap-2.5 border-t border-slate-200/80 bg-slate-50/70 px-6 py-4 text-xs leading-relaxed text-slate-500 sm:px-8">
             <LockClosedIcon className="mt-px size-4 shrink-0 text-slate-400" aria-hidden="true" />
-            <p>{T("loginFooter")}</p>
+            <p>
+              {T("loginFooter")}{" "}
+              <span className="mt-1 block"><a href="/privacy" className="underline hover:text-slate-700">{T("privacyLink")}</a> · <a href="/terms" className="underline hover:text-slate-700">{T("termsLink")}</a></span>
+            </p>
           </footer>
         </div>
       </main>
@@ -179,7 +196,19 @@ function LoginScreen({ loaderData }: { loaderData: Route.ComponentProps["loaderD
   );
 }
 
-function EmailStep({ defaultEmail, error, loggedOut, siteKey }: { defaultEmail: string; error: TextKey | null; loggedOut: boolean; siteKey: string }) {
+function EmailStep({
+  defaultEmail,
+  error,
+  google,
+  loggedOut,
+  siteKey,
+}: {
+  defaultEmail: string;
+  error: TextKey | null;
+  google: boolean;
+  loggedOut: boolean;
+  siteKey: string;
+}) {
   const T = useT();
   const busy = useBusy("request");
   const [token, setToken] = useState<string | null>(null);
@@ -187,6 +216,7 @@ function EmailStep({ defaultEmail, error, loggedOut, siteKey }: { defaultEmail: 
     <div className="space-y-6">
       {loggedOut ? <Notice result={{ ok: true, message: T("loggedOut") }} /> : null}
       {error ? <Notice result={{ ok: false, message: T(error) }} /> : null}
+      {google ? <GoogleSignIn href="/scan/auth/google" label={T("googleButton")} divider={T("orViaEmail")} /> : null}
       <p className="text-[15px] leading-relaxed text-slate-600">{T("loginIntro")}</p>
       <Form method="post" className="space-y-4">
         <input type="hidden" name="intent" value="request" />
