@@ -127,7 +127,7 @@ const PRIVACY_ID: LegalDoc = {
     {
       heading: "8. Berapa lama data disimpan",
       bullets: [
-        "Data peserta (nama, email, WhatsApp, jenis kelamin, kelompok usia, status, kode tiket), log email, dan catatan aktivitas dihapus atau dianonimkan paling lambat 90 hari setelah acara.",
+        "Data peserta (nama, email, WhatsApp, jenis kelamin, kelompok usia, status, kode tiket) dan log email dihapus oleh panitia paling lambat 90 hari setelah acara. Penghapusan dilakukan manual oleh admin, yang diingatkan lewat email sebelum dan sesudah batas waktu itu. Catatan aktivitas admin disimpan selama diperlukan untuk keamanan dan akuntabilitas.",
         "Jika acara berbayar, catatan keuangan di rekening bank dan pembukuan perkumpulan, yang berada di luar sistem ini, disimpan sesuai kewajiban hukum Belanda (umumnya 7 tahun).",
         "Detail check-in (siapa petugasnya dan perangkat yang dipakai) dianonimkan 30 hari setelah acara berakhir; sesi dan hasil uji perangkat petugas dihapus pada saat yang sama.",
         "Akses pemirsa panitia berakhir 7 hari setelah acara dan datanya dihapus. Sesi masuk berlaku 24 jam (admin), 48 jam (petugas check-in), atau 3 hari (pemirsa panitia); kode masuk email berlaku 10 menit.",
@@ -247,7 +247,7 @@ const PRIVACY_EN: LegalDoc = {
     {
       heading: "8. How long we keep data",
       bullets: [
-        "Participant data (name, email, WhatsApp, gender, age group, status, ticket codes), email logs and the activity log are deleted or anonymised no later than 90 days after the event.",
+        "Participant data (name, email, WhatsApp, gender, age group, status, ticket codes) and email logs are deleted by the committee no later than 90 days after the event. Deletion is done by hand by an admin, who is reminded by email before and after that date. The admins' activity log is kept as long as needed for security and accountability.",
         "If the event has a fee, financial records at the bank and in the association's books, which are outside this system, are kept as Dutch law requires (generally 7 years).",
         "Check-in details (which staff member and which device) are anonymised 30 days after the event ends; staff sessions and device self-test results are deleted at the same time.",
         "Committee viewer access ends 7 days after the event and its data is deleted. Sign-in sessions last 24 hours (admins), 48 hours (check-in staff) or 3 days (committee viewers); email login codes are valid for 10 minutes.",

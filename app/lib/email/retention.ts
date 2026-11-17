@@ -1,4 +1,5 @@
-// Emails to ADMINS about the automatic data deletion (privacy policy: participant data is removed 90 days after the event).
+// Emails to ADMINS about the data deletion (privacy policy: participant data is removed 90 days after the event).
+// Default mode 'remind' (current): the admins delete by hand, the system only reminds. Mode 'purge' = wording of the DEFERRED automatic purge.
 // Same look as the other system emails: table layout, inline styles, no web fonts or remote CSS (privacy rule).
 // They carry numbers only: never a name, email address or phone number of a participant.
 import { escapeHtml } from "./templates";
@@ -100,8 +101,8 @@ function frame(subject: string, tag: string, heading: string, body: string, repl
 
 const origin = (adminUrl?: string) => adminUrl?.replace(/\/$/, "");
 
-/** "Data will be deleted on <date>" for one warning stage (30, 7 or 1 day before). */
-export function retentionWarningEmail(args: Shared & { stage: WarningStage }) {
+/** Wording of the DEFERRED automatic purge ("the system will delete on <date>"). Not used while AUTO_PURGE_ENABLED is false. */
+function purgeWarningEmail(args: Shared & { stage: WarningStage }) {
   const copy = STAGE_COPY[args.stage];
   const subject = copy.subject(args.eventTitle, args.dueText);
   const base = origin(args.adminUrl);
@@ -181,4 +182,74 @@ export function retentionDoneEmail(args: Omit<Shared, "dueText"> & { purgedAtTex
     "Sistem Pendaftaran PPME Den Haag",
   ].join("\n");
   return { subject, html: frame(subject, "Selesai", "Data peserta sudah dihapus", body, args.replyTo, base), text };
+}
+
+const REMIND_SUBJECT: Record<WarningStage | "overdue", (t: string, d: string) => string> = {
+  w30: (t, d) => `Pengingat: data peserta ${t} perlu dihapus sebelum ${d}`,
+  w7: (t, d) => `Penting: tinggal 7 hari untuk menghapus data peserta ${t} (${d})`,
+  w1: (t, d) => `Terakhir: data peserta ${t} harus dihapus besok (${d})`,
+  overdue: (t, d) => `Segera hapus: batas penghapusan data peserta ${t} sudah lewat (${d})`,
+};
+
+/** REMINDER for the admins to delete the participant data by hand (the system deletes nothing by itself). */
+function remindWarningEmail(args: Shared & { stage: WarningStage; overdue?: boolean }) {
+  const key = args.overdue ? "overdue" : args.stage;
+  const subject = REMIND_SUBJECT[key](args.eventTitle, args.dueText);
+  const tag = args.overdue ? "Segera" : args.stage === "w30" ? "Pengingat" : args.stage === "w7" ? "Penting" : "Peringatan terakhir";
+  const base = origin(args.adminUrl);
+  const { registrations, participants } = args.counts;
+  const lead = args.overdue
+    ? `Batas penghapusan, yaitu <strong>${escapeHtml(args.dueText)}</strong> (waktu Belanda), sudah lewat. Mohon hapus data peserta sekarang.`
+    : `Batas penghapusannya adalah <strong>${escapeHtml(args.dueText)}</strong> (waktu Belanda).`;
+
+  const body = [
+    p("Assalamu’alaikum warahmatullahi wabarakatuh,", 12),
+    p(
+      `Sesuai Kebijakan Privasi, data pribadi peserta <strong>${escapeHtml(args.eventTitle)}</strong> harus dihapus paling lambat 90 hari setelah acara. ${lead} ` +
+        `Penghapusan dilakukan <strong>manual oleh admin</strong>: sistem tidak menghapus apa pun secara otomatis.`,
+    ),
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;background-color:#F8FAFC;border:1px solid #E2E8F0;"><tr><td style="padding:14px 18px;font-family:${FONT};font-size:14px;line-height:22px;color:#334155;">
+      <strong style="color:#0F172A;">Masih tersimpan:</strong> ${registrations} pendaftaran dan ${participants} peserta (nama, email, WhatsApp, kode tiket).<br>
+      Penghapusan satu pendaftaran juga menghapus pesertanya dan log emailnya, dan <strong>tidak dapat dibatalkan</strong>.
+    </td></tr></table>`,
+    p("<strong>Yang perlu dilakukan</strong>", 6),
+    `<ol style="margin:0 0 18px 0;padding-left:22px;font-family:${FONT};font-size:15px;line-height:24px;color:#334155;">
+      <li>Unduh ekspor CSV jika datanya masih dibutuhkan untuk laporan atau pembukuan.</li>
+      <li>Buka <em>Pendaftaran</em>, buka setiap pendaftaran, lalu klik tombol <em>Hapus</em> (ikon tempat sampah). Pendaftaran yang sudah ada check-in tidak bisa dihapus; hubungi pengurus untuk kasus itu.</li>
+      <li>Ada sengketa atau insiden keamanan yang belum selesai? Aktifkan <em>Jeda pengingat</em> di Pengaturan acara dan simpan datanya sampai selesai.</li>
+    </ol>`,
+    p(args.overdue ? "Pengingat ini diulang setiap 7 hari sampai semua data peserta dihapus." : "Anda akan menerima pengingat lagi mendekati batas waktu, dan setiap 7 hari setelah batas lewat sampai semua data peserta dihapus.", 18),
+    base
+      ? `<div style="margin:0 0 20px 0;">${button(`${base}/admin/registrations`, "Buka daftar pendaftaran", true)}${button(`${base}/admin/export`, "Unduh ekspor (CSV)", false)}</div>`
+      : p("Buka /admin/registrations untuk menghapus dan /admin/export untuk mengunduh ekspor.", 20),
+    p("Wassalamu’alaikum warahmatullahi wabarakatuh,<br><strong style=\"color:#0F172A;\">Sistem Pendaftaran PPME Den Haag</strong>", 0),
+  ].join("\n");
+
+  const text = [
+    "Assalamu’alaikum warahmatullahi wabarakatuh,",
+    "",
+    `Sesuai Kebijakan Privasi, data pribadi peserta ${args.eventTitle} harus dihapus paling lambat 90 hari setelah acara.`,
+    args.overdue ? `Batas penghapusan (${args.dueText}, waktu Belanda) sudah lewat. Mohon hapus data peserta sekarang.` : `Batas penghapusannya adalah ${args.dueText} (waktu Belanda).`,
+    "Penghapusan dilakukan manual oleh admin: sistem tidak menghapus apa pun secara otomatis.",
+    "",
+    `Masih tersimpan: ${registrations} pendaftaran dan ${participants} peserta. Menghapus satu pendaftaran juga menghapus pesertanya dan log emailnya; tidak dapat dibatalkan.`,
+    "",
+    "Yang perlu dilakukan:",
+    "1. Unduh ekspor CSV jika datanya masih dibutuhkan.",
+    "2. Buka Pendaftaran, buka setiap pendaftaran, klik Hapus (ikon tempat sampah). Yang sudah check-in tidak bisa dihapus; hubungi pengurus.",
+    "3. Ada sengketa atau insiden yang belum selesai? Aktifkan Jeda pengingat di Pengaturan acara.",
+    "",
+    base ? `Pendaftaran: ${base}/admin/registrations` : "Pendaftaran: /admin/registrations",
+    base ? `Ekspor: ${base}/admin/export` : "Ekspor: /admin/export",
+    "",
+    "Wassalamu’alaikum warahmatullahi wabarakatuh,",
+    "Sistem Pendaftaran PPME Den Haag",
+  ].join("\n");
+
+  return { subject, html: frame(subject, tag, args.overdue ? "Batas penghapusan data peserta sudah lewat" : "Data peserta perlu dihapus", body, args.replyTo, base), text };
+}
+
+/** The email for one reminder. Default mode "remind" (admins delete by hand); "purge" is the deferred automatic deletion. */
+export function retentionWarningEmail(args: Shared & { stage: WarningStage; mode?: "remind" | "purge"; overdue?: boolean }) {
+  return args.mode === "purge" ? purgeWarningEmail(args) : remindWarningEmail(args);
 }

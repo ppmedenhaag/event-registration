@@ -8,7 +8,9 @@ import { runDeadlineJob } from "../app/lib/jobs.server";
 import { deleteRegistration } from "../app/lib/payments.server";
 import { registerOnline } from "../app/lib/registration.server";
 import {
+  AUTO_PURGE_ENABLED,
   MAX_FINAL_WARNING_AGE_MS,
+  OVERDUE_REMINDER_EVERY_MS,
   MIN_FINAL_WARNING_MS,
   RETENTION_DAYS,
   decideRetention,
@@ -31,6 +33,12 @@ const END = "2026-12-05T13:30:00.000Z";
 const DAY = 86_400_000;
 const DUE = new Date(new Date(END).getTime() + RETENTION_DAYS * DAY); // 2027-03-05T13:30:00.000Z
 const cfg = { ...emailCfg, adminUrl: "https://admin.example" };
+/**
+ * The automatic purge is DEACTIVATED in production (AUTO_PURGE_ENABLED = false, reminders only). The tests below that
+ * exercise it use this explicit opt-in so the deferred code stays verified; production code never passes it.
+ */
+const runAuto = (d: D1Database, c: typeof cfg, now: Date) => runRetention(d, c, now, { autoPurge: true });
+const decideAuto = (n: Date, d: Date, r: LogRow[], h: boolean) => decideRetention(n, d, r, h, true);
 /** A moment relative to the purge date (negative = before). */
 const rel = (days: number, extraMs = 0) => new Date(DUE.getTime() + days * DAY + extraMs);
 
@@ -132,13 +140,13 @@ async function dumpAll() {
 
 /** Drive the whole lifecycle the way the cron would: warnings at 30/7/1 days, purge at the date. */
 async function walkToPurge() {
-  await runRetention(db, cfg, rel(-30, 1000));
-  await runRetention(db, cfg, rel(-7, 1000));
-  await runRetention(db, cfg, rel(-1, 0));
-  return runRetention(db, cfg, rel(0, 0));
+  await runAuto(db, cfg, rel(-30, 1000));
+  await runAuto(db, cfg, rel(-7, 1000));
+  await runAuto(db, cfg, rel(-1, 0));
+  return runAuto(db, cfg, rel(0, 0));
 }
 
-describe("retentionDue and decideRetention (pure rules)", () => {
+describe("retentionDue and decideRetention (pure rules; deferred purge mode)", () => {
   it("is the event end plus 90 days; an unusable end date never purges", () => {
     expect(RETENTION_DAYS).toBe(90);
     expect(retentionDue({ ends_at: END })!.toISOString()).toBe("2027-03-05T13:30:00.000Z");
@@ -155,57 +163,57 @@ describe("retentionDue and decideRetention (pure rules)", () => {
   });
 
   it("does nothing before the first warning window and while on hold", () => {
-    expect(decideRetention(rel(-31), DUE, [], false)).toEqual({ action: "none", reason: "too_early" });
-    expect(decideRetention(rel(-365), DUE, [], false)).toEqual({ action: "none", reason: "too_early" });
-    expect(decideRetention(rel(10), DUE, [warn("w1", rel(-1))], true)).toEqual({ action: "none", reason: "hold" });
-    expect(decideRetention(rel(-3), DUE, [], true)).toEqual({ action: "none", reason: "hold" });
+    expect(decideAuto(rel(-31), DUE, [], false)).toEqual({ action: "none", reason: "too_early" });
+    expect(decideAuto(rel(-365), DUE, [], false)).toEqual({ action: "none", reason: "too_early" });
+    expect(decideAuto(rel(10), DUE, [warn("w1", rel(-1))], true)).toEqual({ action: "none", reason: "hold" });
+    expect(decideAuto(rel(-3), DUE, [], true)).toEqual({ action: "none", reason: "hold" });
   });
 
   it("warns once per stage as each window is reached", () => {
-    expect(decideRetention(rel(-30), DUE, [], false)).toEqual({ action: "warn", stage: "w30" });
-    expect(decideRetention(rel(-29), DUE, [warn("w30", rel(-30))], false)).toEqual({ action: "wait", reason: "warned" });
-    expect(decideRetention(rel(-7), DUE, [warn("w30", rel(-30))], false)).toEqual({ action: "warn", stage: "w7" });
-    expect(decideRetention(rel(-6), DUE, [warn("w30", rel(-30)), warn("w7", rel(-7))], false)).toEqual({ action: "wait", reason: "warned" });
-    expect(decideRetention(rel(-1), DUE, [warn("w30", rel(-30)), warn("w7", rel(-7))], false)).toEqual({ action: "warn", stage: "w1" });
-    expect(decideRetention(rel(-0.5), DUE, [warn("w1", rel(-1))], false)).toEqual({ action: "wait", reason: "warned" });
+    expect(decideAuto(rel(-30), DUE, [], false)).toEqual({ action: "warn", stage: "w30" });
+    expect(decideAuto(rel(-29), DUE, [warn("w30", rel(-30))], false)).toEqual({ action: "wait", reason: "warned" });
+    expect(decideAuto(rel(-7), DUE, [warn("w30", rel(-30))], false)).toEqual({ action: "warn", stage: "w7" });
+    expect(decideAuto(rel(-6), DUE, [warn("w30", rel(-30)), warn("w7", rel(-7))], false)).toEqual({ action: "wait", reason: "warned" });
+    expect(decideAuto(rel(-1), DUE, [warn("w30", rel(-30)), warn("w7", rel(-7))], false)).toEqual({ action: "warn", stage: "w1" });
+    expect(decideAuto(rel(-0.5), DUE, [warn("w1", rel(-1))], false)).toEqual({ action: "wait", reason: "warned" });
   });
 
   it("a late start sends only the most urgent warning, never a pile of three", () => {
-    expect(decideRetention(rel(-20), DUE, [], false)).toEqual({ action: "warn", stage: "w30" });
-    expect(decideRetention(rel(-3), DUE, [], false)).toEqual({ action: "warn", stage: "w7" });
-    expect(decideRetention(rel(0), DUE, [], false)).toEqual({ action: "warn", stage: "w1" });
-    expect(decideRetention(rel(40), DUE, [], false)).toEqual({ action: "warn", stage: "w1" });
+    expect(decideAuto(rel(-20), DUE, [], false)).toEqual({ action: "warn", stage: "w30" });
+    expect(decideAuto(rel(-3), DUE, [], false)).toEqual({ action: "warn", stage: "w7" });
+    expect(decideAuto(rel(0), DUE, [], false)).toEqual({ action: "warn", stage: "w1" });
+    expect(decideAuto(rel(40), DUE, [], false)).toEqual({ action: "warn", stage: "w1" });
   });
 
   it("purges only with a final warning that is at least 24 h and at most 7 days old", () => {
     const at = (ms: number) => new Date(DUE.getTime() + ms);
     // exactly 24 h old at the due moment: allowed
-    expect(decideRetention(at(0), DUE, [warn("w1", at(-MIN_FINAL_WARNING_MS))], false)).toEqual({ action: "purge" });
+    expect(decideAuto(at(0), DUE, [warn("w1", at(-MIN_FINAL_WARNING_MS))], false)).toEqual({ action: "purge" });
     // 1 ms short of 24 h: wait
-    expect(decideRetention(at(0), DUE, [warn("w1", at(-MIN_FINAL_WARNING_MS + 1))], false)).toEqual({ action: "wait", reason: "final_warning_too_recent" });
+    expect(decideAuto(at(0), DUE, [warn("w1", at(-MIN_FINAL_WARNING_MS + 1))], false)).toEqual({ action: "wait", reason: "final_warning_too_recent" });
     // sent just now after the date: wait
-    expect(decideRetention(at(5 * 3600_000), DUE, [warn("w1", at(5 * 3600_000 - 60_000))], false)).toEqual({ action: "wait", reason: "final_warning_too_recent" });
+    expect(decideAuto(at(5 * 3600_000), DUE, [warn("w1", at(5 * 3600_000 - 60_000))], false)).toEqual({ action: "wait", reason: "final_warning_too_recent" });
     // 7 days old: still allowed; 1 ms older: warn again first
-    expect(decideRetention(at(6 * DAY), DUE, [warn("w1", at(6 * DAY - MAX_FINAL_WARNING_AGE_MS))], false)).toEqual({ action: "purge" });
-    expect(decideRetention(at(6 * DAY), DUE, [warn("w1", at(6 * DAY - MAX_FINAL_WARNING_AGE_MS - 1))], false)).toEqual({ action: "warn", stage: "w1" });
+    expect(decideAuto(at(6 * DAY), DUE, [warn("w1", at(6 * DAY - MAX_FINAL_WARNING_AGE_MS))], false)).toEqual({ action: "purge" });
+    expect(decideAuto(at(6 * DAY), DUE, [warn("w1", at(6 * DAY - MAX_FINAL_WARNING_AGE_MS - 1))], false)).toEqual({ action: "warn", stage: "w1" });
   });
 
   it("ignores warnings that announced another date, reached nobody, or are unreadable", () => {
     const now = rel(0);
-    expect(decideRetention(now, DUE, [warn("w1", rel(-1), { due: "2027-03-01T00:00:00.000Z" })], false)).toEqual({ action: "warn", stage: "w1" });
-    expect(decideRetention(now, DUE, [warn("w1", rel(-1), { sent: 0 })], false)).toEqual({ action: "warn", stage: "w1" });
-    expect(decideRetention(now, DUE, [{ stage: "w1", at: rel(-1).toISOString(), detail: "{broken" }], false)).toEqual({ action: "warn", stage: "w1" });
-    expect(decideRetention(now, DUE, [{ stage: "w1", at: rel(-1).toISOString(), detail: null }], false)).toEqual({ action: "warn", stage: "w1" });
-    expect(decideRetention(now, DUE, [warn("w30", rel(-31)), warn("w7", rel(-8))], false)).toEqual({ action: "warn", stage: "w1" });
+    expect(decideAuto(now, DUE, [warn("w1", rel(-1), { due: "2027-03-01T00:00:00.000Z" })], false)).toEqual({ action: "warn", stage: "w1" });
+    expect(decideAuto(now, DUE, [warn("w1", rel(-1), { sent: 0 })], false)).toEqual({ action: "warn", stage: "w1" });
+    expect(decideAuto(now, DUE, [{ stage: "w1", at: rel(-1).toISOString(), detail: "{broken" }], false)).toEqual({ action: "warn", stage: "w1" });
+    expect(decideAuto(now, DUE, [{ stage: "w1", at: rel(-1).toISOString(), detail: null }], false)).toEqual({ action: "warn", stage: "w1" });
+    expect(decideAuto(now, DUE, [warn("w30", rel(-31)), warn("w7", rel(-8))], false)).toEqual({ action: "warn", stage: "w1" });
   });
 });
 
-describe("a normal day is free and safe", () => {
+describe("a normal day is free and safe (live mode)", () => {
   it("does nothing, sends nothing and touches nothing months before the date", async () => {
     await seed();
     const before = await dumpAll();
     const report = await runRetention(db, cfg, new Date("2026-12-20T10:00:00.000Z"));
-    expect(report).toEqual({ checked: 0, warned: [], purged: [], blocked: [] });
+    expect(report).toEqual({ checked: 0, warned: [], purged: [], blocked: [], nothingLeft: [] });
     expect(await dumpAll()).toBe(before);
     expect(await count("retention_log")).toBe(0);
   });
@@ -216,11 +224,11 @@ describe("a normal day is free and safe", () => {
   });
 });
 
-describe("warnings to admins", () => {
+describe("warnings to admins (deferred purge mode)", () => {
   it("emails every admin at 30 days, records it, and does not repeat it", async () => {
     const ids = await seed();
     const t = rel(-30, 60_000);
-    const report = await runRetention(db, cfg, t);
+    const report = await runAuto(db, cfg, t);
     expect(report.warned).toEqual([{ eventId: event.id, stage: "w30", sent: 2, failed: 0 }]);
     const mails = (await outbox()).filter((m) => m.kind === "retention_w30");
     expect(mails.map((m) => m.to_address).sort()).toEqual(["admin1@x.nl", "admin2@x.nl"]);
@@ -231,7 +239,7 @@ describe("warnings to admins", () => {
 
     // the same and the next runs stay quiet; nothing was deleted
     for (const later of [rel(-30, 5 * 60_000), rel(-20), rel(-10)]) {
-      const again = await runRetention(db, cfg, later);
+      const again = await runAuto(db, cfg, later);
       expect(again.warned).toEqual([]);
     }
     expect((await outbox()).filter((m) => m.kind === "retention_w30")).toHaveLength(2);
@@ -240,7 +248,7 @@ describe("warnings to admins", () => {
 
   it("the email says what is deleted, when, and links to the export and the hold switch, with no personal data", async () => {
     await seed();
-    await runRetention(db, cfg, rel(-7, 60_000));
+    await runAuto(db, cfg, rel(-7, 60_000));
     const mail = (await outbox()).find((m) => m.kind === "retention_w7")!;
     expect(mail.subject).toContain("7 hari");
     expect(mail.subject).toContain(event.title);
@@ -261,7 +269,11 @@ describe("warnings to admins", () => {
     });
     expect(mail.html).not.toContain("href=\"undefined");
     expect(mail.text).toContain("/admin/export");
-    expect(mail.subject).toContain("Peringatan terakhir");
+    expect(mail.subject).toContain("Terakhir");
+    expect(mail.text).toContain("manual oleh admin");
+    expect(mail.text).toContain("/admin/registrations");
+    const purgeMode = retentionWarningEmail({ stage: "w1", mode: "purge", eventTitle: "Kajian", dueText: "05-03-2027 14:30", counts: { registrations: 1, participants: 2, checkedIn: 0 }, replyTo: "r@x.nl" });
+    expect(purgeMode.subject).toContain("Peringatan terakhir");
     const done = retentionDoneEmail({ eventTitle: "Kajian", purgedAtText: "x", counts: { registrations: 1, participants: 2, checkedIn: 1 }, replyTo: "r@x.nl" });
     expect(done.html).toContain("1 pendaftaran, 2 peserta");
   });
@@ -269,14 +281,14 @@ describe("warnings to admins", () => {
   it("when nobody can be reached nothing is recorded, the warning is retried, and the purge stays blocked", async () => {
     await seed();
     await db.prepare("DELETE FROM admins").run();
-    const r1 = await runRetention(db, cfg, rel(-1, 0));
+    const r1 = await runAuto(db, cfg, rel(-1, 0));
     expect(r1.warned).toEqual([]);
     expect(r1.blocked[0]).toContain("tidak sampai");
     expect(await count("retention_log")).toBe(0);
 
     // days pass with no admin: still no purge, however late
     for (const t of [rel(0), rel(3), rel(30)]) {
-      const r = await runRetention(db, cfg, t);
+      const r = await runAuto(db, cfg, t);
       expect(r.purged).toEqual([]);
     }
     expect(await count("registrations")).toBe(4 - 1); // seeded 4, one deleted by the admin delete
@@ -284,27 +296,27 @@ describe("warnings to admins", () => {
 
     // an admin is added again: the final warning goes out first, the purge 24 h later
     await addAdmin(db, "system", "admin3@x.nl", "Admin Tiga", rel(31));
-    expect((await runRetention(db, cfg, rel(31))).warned).toHaveLength(1);
-    expect((await runRetention(db, cfg, rel(31, 3600_000))).purged).toEqual([]);
-    expect((await runRetention(db, cfg, rel(32, 1000))).purged).toHaveLength(1);
+    expect((await runAuto(db, cfg, rel(31))).warned).toHaveLength(1);
+    expect((await runAuto(db, cfg, rel(31, 3600_000))).purged).toEqual([]);
+    expect((await runAuto(db, cfg, rel(32, 1000))).purged).toHaveLength(1);
   });
 
   it("when the email provider is down the warning is not recorded as sent and the purge stays blocked", async () => {
     await seed();
     const down = { ...cfg, mode: "resend" as const, resendApiKey: undefined }; // sending throws for everybody
-    const r = await runRetention(db, down, rel(-1, 0));
+    const r = await runAuto(db, down, rel(-1, 0));
     expect(r.warned).toEqual([]);
     expect(r.blocked).toHaveLength(1);
     expect(await count("retention_log")).toBe(0);
-    for (const t of [rel(0), rel(2)]) expect((await runRetention(db, down, t)).purged).toEqual([]);
+    for (const t of [rel(0), rel(2)]) expect((await runAuto(db, down, t)).purged).toEqual([]);
     expect(await count("registrations")).toBe(3);
     // the provider is back: warning first, purge 24 h later
-    expect((await runRetention(db, cfg, rel(2, 5000))).warned).toHaveLength(1);
-    expect((await runRetention(db, cfg, rel(3, 6000))).purged).toHaveLength(1);
+    expect((await runAuto(db, cfg, rel(2, 5000))).warned).toHaveLength(1);
+    expect((await runAuto(db, cfg, rel(3, 6000))).purged).toHaveLength(1);
   });
 });
 
-describe("the purge", () => {
+describe("the purge (deferred, opt-in only)", () => {
   it("runs the full lifecycle: 3 warnings, then one atomic deletion with a numbers-only snapshot", async () => {
     const ids = await seed();
     const report = await walkToPurge();
@@ -351,7 +363,7 @@ describe("the purge", () => {
   it("leaves no trace of any person anywhere in the database (every table searched)", async () => {
     await seed();
     const before = await dumpAll();
-    for (const secret of [...SECRETS.names, ...SECRETS.emails, SECRETS.phone, SECRETS.note, "Dihapus Admin"]) {
+    for (const secret of [...SECRETS.names, ...SECRETS.emails, SECRETS.phone, SECRETS.note]) {
       expect(before, `seed should contain ${secret}`).toContain(secret);
     }
     await walkToPurge();
@@ -375,8 +387,8 @@ describe("the purge", () => {
     await walkToPurge();
     const mails = (await outbox()).length;
     expect(await purgeEvent(db, event, DUE, rel(0, 1000))).toBeNull();
-    const again = await runRetention(db, cfg, rel(5));
-    expect(again).toEqual({ checked: 0, warned: [], purged: [], blocked: [] });
+    const again = await runAuto(db, cfg, rel(5));
+    expect(again).toEqual({ checked: 0, warned: [], purged: [], blocked: [], nothingLeft: [] });
     expect((await outbox()).length).toBe(mails);
     expect(await count("retention_log", "stage = 'purged'")).toBe(1);
   });
@@ -426,10 +438,10 @@ describe("the purge", () => {
     expect(await retentionCounts(db, event.id)).toEqual({ registrations: 600, participants: 1200, checkedIn: 0 });
 
     const started = Date.now();
-    await runRetention(db, cfg, rel(-30, 1000));
-    await runRetention(db, cfg, rel(-7, 1000));
-    await runRetention(db, cfg, rel(-1, 0));
-    const report = await runRetention(db, cfg, rel(0, 0));
+    await runAuto(db, cfg, rel(-30, 1000));
+    await runAuto(db, cfg, rel(-7, 1000));
+    await runAuto(db, cfg, rel(-1, 0));
+    const report = await runAuto(db, cfg, rel(0, 0));
     expect(report.purged).toEqual([{ eventId: event.id, registrations: 600, participants: 1200 }]);
     expect(await count("registrations")).toBe(0);
     expect(await count("participants")).toBe(0);
@@ -443,10 +455,10 @@ describe("the purge", () => {
 
   it("two overlapping cron runs delete exactly once", async () => {
     await seed();
-    await runRetention(db, cfg, rel(-30, 1000));
-    await runRetention(db, cfg, rel(-7, 1000));
-    await runRetention(db, cfg, rel(-1, 0));
-    const [r1, r2] = await Promise.all([runRetention(db, cfg, rel(0, 0)), runRetention(db, cfg, rel(0, 0))]);
+    await runAuto(db, cfg, rel(-30, 1000));
+    await runAuto(db, cfg, rel(-7, 1000));
+    await runAuto(db, cfg, rel(-1, 0));
+    const [r1, r2] = await Promise.all([runAuto(db, cfg, rel(0, 0)), runAuto(db, cfg, rel(0, 0))]);
     expect(r1.purged.length + r2.purged.length).toBe(1);
     expect(await count("retention_log", "stage = 'purged'")).toBe(1);
     expect(await count("registrations")).toBe(0);
@@ -455,20 +467,20 @@ describe("the purge", () => {
 
   it("is atomic: if any statement fails nothing is deleted and nothing is recorded as purged", async () => {
     await seed();
-    await runRetention(db, cfg, rel(-30, 1000));
-    await runRetention(db, cfg, rel(-7, 1000));
-    await runRetention(db, cfg, rel(-1, 0));
+    await runAuto(db, cfg, rel(-30, 1000));
+    await runAuto(db, cfg, rel(-7, 1000));
+    await runAuto(db, cfg, rel(-1, 0));
     const before = await dumpAll();
     await db.prepare("ALTER TABLE registrant_login_codes RENAME TO registrant_login_codes_x").run();
     try {
-      await expect(runRetention(db, cfg, rel(0, 0))).rejects.toThrow();
+      await expect(runAuto(db, cfg, rel(0, 0))).rejects.toThrow();
     } finally {
       await db.prepare("ALTER TABLE registrant_login_codes_x RENAME TO registrant_login_codes").run();
     }
     expect(await count("retention_log", "stage = 'purged'")).toBe(0);
     expect(await dumpAll()).toBe(before);
     // and once the fault is gone the purge succeeds
-    expect((await runRetention(db, cfg, rel(0, 60_000))).purged).toHaveLength(1);
+    expect((await runAuto(db, cfg, rel(0, 60_000))).purged).toHaveLength(1);
   });
 
   it("a failing retention run never breaks the 5-minute job (registrations still expire, emails still go)", async () => {
@@ -551,36 +563,36 @@ describe("the SQL re-checks every condition (a wrong caller cannot delete)", () 
   });
 });
 
-describe("an unexpected start never deletes without notice", () => {
+describe("an unexpected start never deletes without notice (deferred purge mode)", () => {
   it("deployed after the date: the final warning goes first, the purge follows 24 h later", async () => {
     await seed();
     const t0 = rel(5, 0);
-    expect((await runRetention(db, cfg, t0)).warned.map((w) => w.stage)).toEqual(["w1"]);
+    expect((await runAuto(db, cfg, t0)).warned.map((w) => w.stage)).toEqual(["w1"]);
     expect(await count("registrations")).toBe(3);
-    expect((await runRetention(db, cfg, new Date(t0.getTime() + 3600_000))).purged).toEqual([]);
-    expect((await runRetention(db, cfg, new Date(t0.getTime() + MIN_FINAL_WARNING_MS - 1000))).purged).toEqual([]);
+    expect((await runAuto(db, cfg, new Date(t0.getTime() + 3600_000))).purged).toEqual([]);
+    expect((await runAuto(db, cfg, new Date(t0.getTime() + MIN_FINAL_WARNING_MS - 1000))).purged).toEqual([]);
     expect(await count("registrations")).toBe(3);
-    const done = await runRetention(db, cfg, new Date(t0.getTime() + MIN_FINAL_WARNING_MS));
+    const done = await runAuto(db, cfg, new Date(t0.getTime() + MIN_FINAL_WARNING_MS));
     expect(done.purged).toHaveLength(1);
     expect(await count("registrations")).toBe(0);
   });
 
   it("a final warning that went stale (outage) is repeated before the purge", async () => {
     await seed();
-    await runRetention(db, cfg, rel(-1, 0));
+    await runAuto(db, cfg, rel(-1, 0));
     const late = rel(0, MAX_FINAL_WARNING_AGE_MS + DAY); // cron was down for over a week
-    const r = await runRetention(db, cfg, late);
+    const r = await runAuto(db, cfg, late);
     expect(r.purged).toEqual([]);
     expect(r.warned.map((w) => w.stage)).toEqual(["w1"]);
     expect(await count("registrations")).toBe(3);
-    expect((await runRetention(db, cfg, new Date(late.getTime() + MIN_FINAL_WARNING_MS))).purged).toHaveLength(1);
+    expect((await runAuto(db, cfg, new Date(late.getTime() + MIN_FINAL_WARNING_MS))).purged).toHaveLength(1);
   });
 
   it("moving the event end later cancels what was announced: new warnings, no purge on the old date", async () => {
     await seed();
-    await runRetention(db, cfg, rel(-1, 0));
+    await runAuto(db, cfg, rel(-1, 0));
     await db.prepare("UPDATE events SET ends_at = ?").bind("2026-12-15T13:30:00.000Z").run(); // +10 days
-    const r = await runRetention(db, cfg, rel(0, 0));
+    const r = await runAuto(db, cfg, rel(0, 0));
     expect(r.purged).toEqual([]);
     expect(r.warned).toHaveLength(1); // new date: a new warning (w30 window) instead of a purge
     expect(await count("registrations")).toBe(3);
@@ -592,13 +604,13 @@ describe("an unexpected start never deletes without notice", () => {
     await seed();
     await db.prepare("UPDATE events SET ends_at = 'garbage'").run();
     // julianday('garbage') is NULL, so the event is not even selected: no purge, no crash
-    const r = await runRetention(db, cfg, rel(100));
+    const r = await runAuto(db, cfg, rel(100));
     expect(r.purged).toEqual([]);
     expect(await count("registrations")).toBe(3);
   });
 });
 
-describe("the admin hold switch", () => {
+describe("the admin hold switch (deferred purge mode)", () => {
   it("pauses everything, is audited, and releasing it warns first", async () => {
     await seed();
     const on = await setRetentionHold(db, "admin1@x.nl", event.id, true, rel(-40));
@@ -607,7 +619,7 @@ describe("the admin hold switch", () => {
     expect(await count("audit_log", "action = 'event.retention_hold'")).toBe(1);
 
     for (const t of [rel(-30), rel(-1), rel(0), rel(40)]) {
-      const r = await runRetention(db, cfg, t);
+      const r = await runAuto(db, cfg, t);
       expect(r).toMatchObject({ warned: [], purged: [] });
     }
     expect(await count("registrations")).toBe(3);
@@ -617,10 +629,10 @@ describe("the admin hold switch", () => {
     expect((await setRetentionHold(db, "admin1@x.nl", event.id, true)).ok).toBe(true);
     expect(await count("audit_log", "action = 'event.retention_hold'")).toBe(1);
     await setRetentionHold(db, "admin1@x.nl", event.id, false, rel(40));
-    const w = await runRetention(db, cfg, rel(40, 1000));
+    const w = await runAuto(db, cfg, rel(40, 1000));
     expect(w.warned.map((x) => x.stage)).toEqual(["w1"]);
     expect(await count("registrations")).toBe(3);
-    expect((await runRetention(db, cfg, rel(41, 2000))).purged).toHaveLength(1);
+    expect((await runAuto(db, cfg, rel(41, 2000))).purged).toHaveLength(1);
   });
 
   it("is refused once the data is gone, and for an unknown event", async () => {
@@ -632,6 +644,183 @@ describe("the admin hold switch", () => {
   });
 });
 
+describe("LIVE MODE: reminders only, nothing is ever deleted by the system", () => {
+  const dueIso = DUE.toISOString();
+  const row = (stage: string, at: Date): LogRow => ({ stage, at: at.toISOString(), detail: JSON.stringify({ due: dueIso, sent: 2, failed: 0, recipients: 2 }) });
+  const snapshot = async () => ({
+    registrations: await count("registrations"),
+    participants: await count("participants"),
+    emailLog: await count("email_log"),
+    sessions: await count("registrant_sessions"),
+    purgedRows: await count("retention_log", "stage = 'purged'"),
+    names: (await dumpAll()).includes(SECRETS.names[0]),
+  });
+  const retentionMails = async () => (await outbox()).filter((m) => m.kind.startsWith("retention_"));
+
+  it("the automatic purge is switched off in the code", () => {
+    expect(AUTO_PURGE_ENABLED).toBe(false);
+  });
+
+  it("decides: warn at 30/7/1 days, remind AT the date, then every 7 days, never purge", () => {
+    const w = (stage: string, at: Date) => row(stage, at);
+    expect(decideRetention(rel(-31), DUE, [], false)).toEqual({ action: "none", reason: "too_early" });
+    expect(decideRetention(rel(-30), DUE, [], false)).toEqual({ action: "warn", stage: "w30" });
+    expect(decideRetention(rel(-7), DUE, [w("w30", rel(-30))], false)).toEqual({ action: "warn", stage: "w7" });
+    expect(decideRetention(rel(-1), DUE, [w("w30", rel(-30)), w("w7", rel(-7))], false)).toEqual({ action: "warn", stage: "w1" });
+    // the day-before reminder does not count as the reminder at the date
+    expect(decideRetention(rel(0), DUE, [w("w1", rel(-1))], false)).toEqual({ action: "warn", stage: "w1" });
+    // after that one: quiet for 7 days, then again, again ...
+    expect(decideRetention(rel(0, 3600_000), DUE, [w("w1", rel(0))], false)).toEqual({ action: "wait", reason: "warned" });
+    expect(decideRetention(rel(6, 0), DUE, [w("w1", rel(0))], false)).toEqual({ action: "wait", reason: "warned" });
+    expect(decideRetention(new Date(DUE.getTime() + OVERDUE_REMINDER_EVERY_MS), DUE, [w("w1", rel(0))], false)).toEqual({ action: "warn", stage: "w1" });
+    // never a purge, however perfect the conditions or however late
+    for (const t of [rel(0), rel(1), rel(10), rel(400), rel(5000)]) {
+      expect(decideRetention(t, DUE, [w("w1", new Date(t.getTime() - 2 * DAY))], false).action).not.toBe("purge");
+      expect(decideRetention(t, DUE, [], false).action).not.toBe("purge");
+    }
+    expect(decideRetention(rel(100), DUE, [w("w1", rel(-1))], true)).toEqual({ action: "none", reason: "hold" });
+  });
+
+  it("runs the whole lifecycle with reminders only and deletes NOTHING, however late", async () => {
+    await seed();
+    const before = await snapshot();
+    expect(before).toMatchObject({ registrations: 3, participants: 4, purgedRows: 0, names: true });
+
+    const steps: [Date, string][] = [
+      [rel(-30, 1000), "retention_w30"],
+      [rel(-7, 1000), "retention_w7"],
+      [rel(-1, 0), "retention_w1"],
+      [rel(0, 0), "retention_w1"], // the reminder AT the date ("overdue")
+      [rel(7, 5000), "retention_w1"], // and every 7 days
+      [rel(14, 5000), "retention_w1"],
+    ];
+    let expectedMails = 0;
+    for (const [t, kind] of steps) {
+      const r = await runRetention(db, cfg, t);
+      expect(r.warned, kind).toHaveLength(1);
+      expect(r.purged).toEqual([]);
+      expectedMails += 2; // two admins
+      expect((await retentionMails()).length).toBe(expectedMails);
+      expect((await retentionMails()).at(-1)!.kind).toBe(kind);
+      expect(await snapshot()).toEqual(before);
+    }
+    // in between: silence
+    for (const t of [rel(-20), rel(-3), rel(0, 3600_000), rel(3), rel(10), rel(20)]) {
+      expect((await runRetention(db, cfg, t)).warned).toEqual([]);
+    }
+    expect((await retentionMails()).length).toBe(expectedMails);
+    // years later: still reminding, still deleting nothing
+    const r = await runRetention(db, cfg, rel(2000));
+    expect(r.warned).toHaveLength(1);
+    expect(await snapshot()).toEqual(before);
+    expect((await outbox()).some((m) => m.kind === "retention_done")).toBe(false);
+    expect(await count("audit_log", "action = 'retention.purge'")).toBe(0);
+  });
+
+  it("the reminder before the date, at the date, and later reads right (manual deletion, no automatic purge)", async () => {
+    await seed();
+    await runRetention(db, cfg, rel(-7, 1000));
+    await runRetention(db, cfg, rel(0, 0));
+    const mails = await retentionMails();
+    const before = mails.find((m) => m.kind === "retention_w7")!;
+    const overdue = mails.filter((m) => m.kind === "retention_w1").at(-1)!;
+    expect(before.subject).toContain("7 hari");
+    expect(before.html).toContain("manual oleh admin");
+    expect(before.html).toContain("sistem tidak menghapus apa pun secara otomatis");
+    expect(before.html).toContain("https://admin.example/admin/registrations");
+    expect(before.html).toContain("https://admin.example/admin/export");
+    expect(before.html).toMatch(/3 pendaftaran dan 4 peserta/);
+    expect(overdue.subject).toContain("Segera hapus");
+    expect(overdue.subject).toContain("sudah lewat");
+    expect(overdue.html).toContain("diulang setiap 7 hari");
+    for (const m of mails) for (const secret of [...SECRETS.names, ...SECRETS.emails, SECRETS.phone, SECRETS.note]) expect(m.html).not.toContain(secret);
+    for (const m of mails) expect(m.html).not.toMatch(/akan dihapus permanen|dihapus otomatis pada/i);
+  });
+
+  it("stops by itself once the admins have deleted everything (and keeps going while anything is left)", async () => {
+    const ids = await seed();
+    await runRetention(db, cfg, rel(0, 0));
+    expect((await retentionMails()).length).toBe(2);
+    // the admins delete two of the three registrations by hand: reminders go on
+    await deleteRegistration(db, ids.b, "admin1@x.nl", rel(1));
+    await deleteRegistration(db, ids.c, "admin1@x.nl", rel(1));
+    expect(await count("registrations")).toBe(1);
+    const mid = await runRetention(db, cfg, rel(7, 5000));
+    expect(mid.warned).toHaveLength(1);
+    expect(mid.nothingLeft).toEqual([]);
+    // the last one has a checked-in guest: the admin cannot delete it, so the reminder rightly continues
+    expect((await deleteRegistration(db, ids.a, "admin1@x.nl", rel(8))).ok).toBe(false);
+    expect((await runRetention(db, cfg, rel(14, 5000))).warned).toHaveLength(1);
+    // all gone (the committee cleared the check-in data by hand): the reminders stop
+    await db.prepare("UPDATE participants SET checked_in_at = NULL").run();
+    expect((await deleteRegistration(db, ids.a, "admin1@x.nl", rel(15))).ok).toBe(true);
+    const mails = (await retentionMails()).length;
+    const done = await runRetention(db, cfg, rel(21, 5000));
+    expect(done.warned).toEqual([]);
+    expect(done.nothingLeft).toEqual([event.id]);
+    expect((await retentionMails()).length).toBe(mails);
+  });
+
+  it("no admin can be reached: nothing is recorded, it is retried, and still nothing is deleted", async () => {
+    await seed();
+    await db.prepare("DELETE FROM admins").run();
+    const before = await snapshot();
+    const r = await runRetention(db, cfg, rel(0, 0));
+    expect(r.warned).toEqual([]);
+    expect(r.blocked).toHaveLength(1);
+    expect(await count("retention_log")).toBe(0);
+    expect(await snapshot()).toEqual(before);
+    await addAdmin(db, "system", "admin9@x.nl", "Admin", rel(1));
+    expect((await runRetention(db, cfg, rel(1, 5000))).warned).toHaveLength(1);
+  });
+
+  it("the hold pauses the reminders and releasing it resumes them", async () => {
+    await seed();
+    await setRetentionHold(db, "admin1@x.nl", event.id, true, rel(-40));
+    for (const t of [rel(-30), rel(-1), rel(0), rel(30)]) expect((await runRetention(db, cfg, t)).warned).toEqual([]);
+    expect((await retentionMails()).length).toBe(0);
+    await setRetentionHold(db, "admin1@x.nl", event.id, false, rel(31));
+    expect((await runRetention(db, cfg, rel(31, 5000))).warned).toHaveLength(1);
+    expect(await count("registrations")).toBe(3);
+  });
+
+  it("even a perfect set of conditions (valid final warning, past the date) deletes nothing in live mode", async () => {
+    await seed();
+    await db
+      .prepare("INSERT INTO retention_log (event_id, stage, at, detail) VALUES (?, 'w1', ?, ?)")
+      .bind(event.id, rel(-1, 0).toISOString(), JSON.stringify({ due: dueIso, sent: 2, failed: 0, recipients: 2 }))
+      .run();
+    const r = await runRetention(db, cfg, rel(0, 1000));
+    expect(r.purged).toEqual([]);
+    expect(await count("registrations")).toBe(3);
+    expect(await count("retention_log", "stage = 'purged'")).toBe(0);
+    // and the scheduled job, which is what production runs, behaves the same
+    const job = await runDeadlineJob(db, cfg, rel(8, 0));
+    expect(job.retention?.purged ?? []).toEqual([]);
+    expect(await count("registrations")).toBeGreaterThan(0);
+  });
+
+  it("the admin page status says reminders only, and flags an overdue date", async () => {
+    await seed();
+    let st = await retentionStatus(db, event, new Date("2026-12-20T10:00:00.000Z"));
+    expect(st).toMatchObject({ autoPurge: false, overdue: false, hold: false, counts: { registrations: 3, participants: 4 } });
+    st = await retentionStatus(db, event, rel(2));
+    expect(st.overdue).toBe(true);
+    expect(st.decision).toEqual({ action: "warn", stage: "w1" });
+  });
+
+  it("an admin deletion keeps no participant name in the audit log", async () => {
+    const r = await registerOnline(db, event, input({ registrantName: "Nama Unik Dihapus", email: "unik.dihapus@example.com", membership: "Tidak" }), { ignoreWindow: true, now: new Date("2026-11-20T10:00:00.000Z") });
+    if (r.kind === "closed" || r.kind === "duplicate_email" || r.kind === "rejected_quota") throw new Error(r.kind);
+    expect((await deleteRegistration(db, r.registrationId, "admin1@x.nl", rel(-100))).ok).toBe(true);
+    const audit = await db.prepare("SELECT detail FROM audit_log WHERE action = 'registration.delete' AND target = ?").bind(r.registrationId).first<{ detail: string }>();
+    expect(audit!.detail).toContain("people");
+    expect(audit!.detail).not.toContain("Nama Unik");
+    expect(await dumpAll()).not.toContain("Nama Unik Dihapus");
+    expect(await dumpAll()).not.toContain("unik.dihapus@example.com");
+  });
+});
+
 describe("status for the admin page and the policy", () => {
   it("describes where the event stands, from scheduled to purged", async () => {
     await seed();
@@ -639,15 +828,15 @@ describe("status for the admin page and the policy", () => {
     expect(s).toMatchObject({ dueIso: DUE.toISOString(), hold: false, purged: null, warnings: [], counts: { registrations: 3, participants: 4, checkedIn: 1 } });
     expect(s.decision).toEqual({ action: "none", reason: "too_early" });
 
-    await runRetention(db, cfg, rel(-30, 1000));
+    await runAuto(db, cfg, rel(-30, 1000));
     s = await retentionStatus(db, event, rel(-29));
     expect(s.warnings.map((w) => w.stage)).toEqual(["w30"]);
     expect(s.warnings[0].sent).toBe(2);
     expect(s.decision).toEqual({ action: "wait", reason: "warned" });
 
-    await runRetention(db, cfg, rel(-7, 1000));
-    await runRetention(db, cfg, rel(-1, 0));
-    await runRetention(db, cfg, rel(0, 0));
+    await runAuto(db, cfg, rel(-7, 1000));
+    await runAuto(db, cfg, rel(-1, 0));
+    await runAuto(db, cfg, rel(0, 0));
     s = await retentionStatus(db, (await getEventById(db, event.id))!, rel(1));
     expect(s.purged?.snapshot).toMatchObject({ registrations: 3, participants: 4 });
     expect(s.decision).toBeNull();

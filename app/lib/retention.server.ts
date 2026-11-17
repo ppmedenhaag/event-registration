@@ -10,7 +10,13 @@ import { sendDirectEmail, type EmailConfig } from "./email/send.server";
 import { formatDateTime } from "./format";
 
 /**
- * Automatic data deletion (privacy policy: participant data is removed no later than 90 days after the event).
+ * Data retention (privacy policy: participant data is removed no later than 90 days after the event).
+ *
+ * *** CURRENT MODE: REMINDERS ONLY (decision 17 Nov 2026). The system deletes NOTHING by itself. ***
+ * Admins get an email 30, 7 and 1 day before the date, one at the date ("overdue"), then every 7 days until no
+ * registration is left, and delete the data by hand (/admin/registrations -> a registration -> Hapus). The automatic purge
+ * described below is DEFERRED: it stays in this file, fully tested, but `AUTO_PURGE_ENABLED` is false so no scheduled
+ * code path can reach it. Do not flip it without a new explicit decision from the board.
  *
  * WHAT: for an event whose end + 90 days has passed, ALL personal data of that event is deleted: registrations,
  * participants, the email log, the dev outbox, registrant sessions and codes. Names and emails in the audit log are
@@ -32,6 +38,15 @@ import { formatDateTime } from "./format";
  */
 export const RETENTION_DAYS = 90;
 const DAY = 86_400_000;
+
+/**
+ * The automatic purge is DEACTIVATED. With false, `runRetention` only sends reminders and `purgeEvent` is never called
+ * from the scheduled job. Tests opt in explicitly (`runRetention(..., { autoPurge: true })`) to keep the deferred code
+ * verified; production code never passes that option.
+ */
+export const AUTO_PURGE_ENABLED = false;
+/** After the date has passed, the "overdue" reminder repeats this often until nothing is left to delete. */
+export const OVERDUE_REMINDER_EVERY_MS = 7 * DAY;
 
 /** Warning schedule: days before the purge date. Only the most urgent stage that has been reached is ever sent (no catch-up spam). */
 export const WARNING_STAGES: { stage: WarningStage; days: number }[] = [
@@ -80,7 +95,13 @@ export type RetentionDecision =
   | { action: "purge" };
 
 /** Pure decision: what should happen to this event right now? (Unit-tested; `runRetention` only executes it.) */
-export function decideRetention(now: Date, due: Date, rows: LogRow[], hold: boolean): RetentionDecision {
+export function decideRetention(
+  now: Date,
+  due: Date,
+  rows: LogRow[],
+  hold: boolean,
+  autoPurge: boolean = AUTO_PURGE_ENABLED,
+): RetentionDecision {
   if (hold) return { action: "none", reason: "hold" };
   const t = now.getTime();
   const d = due.getTime();
@@ -88,10 +109,19 @@ export function decideRetention(now: Date, due: Date, rows: LogRow[], hold: bool
   const final = validWarning(rows, "w1", dueIso);
 
   if (t >= d) {
+    if (autoPurge) {
+      if (final) {
+        const age = t - new Date(final.at).getTime();
+        if (age >= MIN_FINAL_WARNING_MS && age <= MAX_FINAL_WARNING_AGE_MS) return { action: "purge" };
+        if (age < MIN_FINAL_WARNING_MS) return { action: "wait", reason: "final_warning_too_recent" };
+      }
+      return { action: "warn", stage: "w1" };
+    }
+    // Reminder-only: remind AT the date (the 'w1' row from the day before is older than the date, so it does not count),
+    // then once every 7 days. The caller stops when no registration is left.
     if (final) {
-      const age = t - new Date(final.at).getTime();
-      if (age >= MIN_FINAL_WARNING_MS && age <= MAX_FINAL_WARNING_AGE_MS) return { action: "purge" };
-      if (age < MIN_FINAL_WARNING_MS) return { action: "wait", reason: "final_warning_too_recent" };
+      const sentAt = new Date(final.at).getTime();
+      if (sentAt >= d && t - sentAt < OVERDUE_REMINDER_EVERY_MS) return { action: "wait", reason: "warned" };
     }
     return { action: "warn", stage: "w1" };
   }
@@ -140,6 +170,7 @@ async function sendWarning(
   due: Date,
   stage: WarningStage,
   now: Date,
+  autoPurge: boolean,
 ): Promise<{ sent: number; failed: number }> {
   const recipients = await adminEmails(db);
   const counts = await retentionCounts(db, event.id);
@@ -151,6 +182,8 @@ async function sendWarning(
     try {
       const mail = retentionWarningEmail({
         stage,
+        mode: autoPurge ? "purge" : "remind",
+        overdue: now.getTime() >= due.getTime(),
         eventTitle: event.title,
         dueText: formatDateTime(dueIso),
         counts,
@@ -274,14 +307,22 @@ export interface RetentionReport {
   purged: { eventId: number; registrations: number; participants: number }[];
   /** Reasons a due step could not run (no admin reached, ...). */
   blocked: string[];
+  /** Events whose reminders stopped because no registration is left to delete (reminder-only mode). */
+  nothingLeft: number[];
 }
 
 /**
  * Called from the 5-minute job. Normally ONE query returning nothing. Never throws for one bad event: the caller also
  * wraps it, so a retention problem can never stop registrations from being processed.
  */
-export async function runRetention(db: D1Database, cfg: EmailConfig, now = new Date()): Promise<RetentionReport> {
-  const report: RetentionReport = { checked: 0, warned: [], purged: [], blocked: [] };
+export async function runRetention(
+  db: D1Database,
+  cfg: EmailConfig,
+  now = new Date(),
+  opts: { autoPurge?: boolean } = {},
+): Promise<RetentionReport> {
+  const autoPurge = opts.autoPurge ?? AUTO_PURGE_ENABLED;
+  const report: RetentionReport = { checked: 0, warned: [], purged: [], blocked: [], nothingLeft: [] };
   const { results: events } = await db
     .prepare(
       `SELECT * FROM events e
@@ -299,12 +340,17 @@ export async function runRetention(db: D1Database, cfg: EmailConfig, now = new D
       report.blocked.push(`event ${event.id}: tanggal selesai tidak valid`);
       continue;
     }
-    const decision = decideRetention(now, due, await logRows(db, event.id), event.retention_hold === 1);
+    const decision = decideRetention(now, due, await logRows(db, event.id), event.retention_hold === 1, autoPurge);
     if (decision.action === "warn") {
-      const r = await sendWarning(db, cfg, event, due, decision.stage, now);
+      // Reminder-only: once the admins have deleted everything there is nothing left to remind about.
+      if (!autoPurge && (await retentionCounts(db, event.id)).registrations === 0) {
+        report.nothingLeft.push(event.id);
+        continue;
+      }
+      const r = await sendWarning(db, cfg, event, due, decision.stage, now, autoPurge);
       if (r.sent >= 1) report.warned.push({ eventId: event.id, stage: decision.stage, ...r });
       else report.blocked.push(`event ${event.id}: peringatan ${decision.stage} tidak sampai ke admin mana pun`);
-    } else if (decision.action === "purge") {
+    } else if (decision.action === "purge" && autoPurge) {
       const snap = await purgeEvent(db, event, due, now);
       if (snap) {
         report.purged.push({ eventId: event.id, registrations: snap.registrations, participants: snap.participants });
@@ -352,10 +398,10 @@ export async function setRetentionHold(
     .prepare("SELECT 1 AS ok FROM retention_log WHERE event_id = ? AND stage = 'purged'")
     .bind(eventId)
     .first();
-  if (purged) return { ok: false, message: "Data acara ini sudah dihapus; tidak ada lagi yang bisa ditunda." };
+  if (purged) return { ok: false, message: "Data acara ini sudah dihapus; tidak ada lagi yang bisa dijeda." };
   const text = hold
-    ? "Penghapusan otomatis ditunda. Tidak ada peringatan atau penghapusan sampai Anda mematikan tunda ini."
-    : "Penundaan dimatikan. Admin akan menerima peringatan terakhir dulu; penghapusan menyusul paling cepat 24 jam kemudian.";
+    ? "Pengingat penghapusan dijeda. Tidak ada email pengingat sampai Anda mematikan jeda ini."
+    : "Jeda dimatikan. Pengingat penghapusan dilanjutkan pada pengecekan otomatis berikutnya.";
   const value = hold ? 1 : 0;
   if (event.retention_hold === value) return { ok: true, message: text };
   await db.batch([
@@ -366,6 +412,10 @@ export async function setRetentionHold(
 }
 
 export interface RetentionStatus {
+  /** true only if the deferred automatic purge were switched on; false = reminders only. */
+  autoPurge: boolean;
+  /** The purge date has passed (reminder-only mode: the data should be deleted by hand now). */
+  overdue: boolean;
   dueIso: string | null;
   hold: boolean;
   purged: { at: string; snapshot: PurgeSnapshot } | null;
@@ -390,6 +440,8 @@ export async function retentionStatus(db: D1Database, event: EventRow, now = new
     return w && row ? [{ stage, at: w.at, sent: Number((JSON.parse(row.detail ?? "{}") as { sent?: number }).sent ?? 0) }] : [];
   });
   return {
+    autoPurge: AUTO_PURGE_ENABLED,
+    overdue: !!due && now.getTime() >= due.getTime(),
     dueIso,
     hold: event.retention_hold === 1,
     purged: purgedRow ? { at: purgedRow.at, snapshot: JSON.parse(purgedRow.detail ?? "{}") as PurgeSnapshot } : null,
