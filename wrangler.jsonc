@@ -114,6 +114,8 @@
 				"DEFAULT_EVENT_SLUG": "kajian-aisah-dahlan-2026",
 				"PUBLIC_APP_URL": "https://ppme-registration.ppme-registration.workers.dev",
 				"ENABLE_PUBLIC": "false",
+					// Read-only panitia dashboards (/panitia). Fails closed: only Workers that set this to "true" serve them.
+					"ENABLE_VIEWER": "true",
 				// Turnstile on the login form (code requests). Same widget as `test`: its hostname list must include this
 				// Worker's workers.dev address, and this Worker needs its own TURNSTILE_SECRET secret.
 				"TURNSTILE_SITE_KEY": "0x4AAAAAAF9STdC9uclCsE_i",
@@ -181,6 +183,8 @@
 				"DEFAULT_EVENT_SLUG": "kajian-aisah-dahlan-2026",
 				"PUBLIC_APP_URL": "https://event.ppmedenhaag.nl",
 				"ENABLE_PUBLIC": "false",
+					// Read-only panitia dashboards (/panitia). Fails closed: only Workers that set this to "true" serve them.
+					"ENABLE_VIEWER": "true",
 				"TURNSTILE_SITE_KEY": "0x4AAAAAAF9STdC9uclCsE_i",
 				"BANK_ACCOUNT_NAME": "VERENIGING PPME",
 				"BANK_IBAN": "NL26 INGB 0002 1661 44",

@@ -17,10 +17,15 @@ import { sendDirectEmail, type EmailConfig } from "./email/send.server";
  * Two logins share this mechanism with separate tables: the admin dashboard (`admins`) and the scanner app
  * (`scanners`, active only). The table names below are constants, never user input.
  */
-export type LoginRealm = "admin" | "scanner";
+export type LoginRealm = "admin" | "scanner" | "viewer";
 const REALM_SQL: Record<LoginRealm, { codes: string; member: string }> = {
   admin: { codes: "admin_login_codes", member: "SELECT 1 FROM admins WHERE email = ?1" },
   scanner: { codes: "scanner_login_codes", member: "SELECT 1 FROM scanners WHERE email = ?1 AND active = 1" },
+  // Panitia viewers (read-only dashboards): approved by an admin and not expired. Anyone else gets no code and no email.
+  viewer: {
+    codes: "viewer_login_codes",
+    member: "SELECT 1 FROM viewers WHERE email = ?1 AND status = 'approved' AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+  },
 };
 
 export const CODE_TTL_MS = 10 * 60_000;
@@ -115,11 +120,12 @@ export async function requestLoginCode(
     country: meta.country,
     userAgent: meta.userAgent,
     replyTo: cfg.replyTo,
+    audience: realm === "viewer" ? "viewer" : "admin",
   });
 
   try {
     await sendDirectEmail(db, cfg, { to: email, subject, html, text, attachments: [] }, {
-      kind: realm === "scanner" ? "scanner_login_code" : "login_code",
+      kind: realm === "scanner" ? "scanner_login_code" : realm === "viewer" ? "viewer_login_code" : "login_code",
       idempotencyKey: `login-code:${row.id}:${salt}`,
     });
   } catch (err) {

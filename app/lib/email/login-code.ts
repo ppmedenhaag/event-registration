@@ -21,7 +21,7 @@ export interface LoginCodeEmailArgs {
   userAgent?: string | null;
   replyTo: string;
   /** "admin" (default): Dashboard Panitia. "registrant": a participant opening their own registration. */
-  audience?: "admin" | "registrant";
+  audience?: "admin" | "registrant" | "viewer";
   /** Registrant only: the event title and the path of the page the code is for (e.g. /e/<slug>/pendaftaran-saya). */
   eventTitle?: string;
   path?: string;
@@ -43,6 +43,22 @@ function copyFor(args: LoginCodeEmailArgs) {
       path: args.path ?? "/",
       noRequest:
         "Abaikan email ini. Tanpa kode ini tidak ada yang dapat membuka pendaftaran Anda.",
+    };
+  }
+  if (args.audience === "viewer") {
+    return {
+      subject: `${args.code} adalah kode masuk Ringkasan Panitia PPME Den Haag`,
+      label: "Ringkasan Panitia",
+      eyebrow: "Kode masuk",
+      heading: "Masuk ke Ringkasan Panitia",
+      intro:
+        "Gunakan kode berikut untuk membuka Ringkasan Panitia (hanya-baca) Kajian PPME Den Haag. Masukkan kode ini di halaman masuk yang sedang Anda buka.",
+      introText: "Gunakan kode berikut untuk membuka Ringkasan Panitia Kajian PPME Den Haag:",
+      codeLabel: "Kode masuk Anda",
+      usage: "hanya untuk satu kali masuk",
+      footer: "permintaan masuk ke",
+      path: "/panitia",
+      noRequest: "Abaikan email ini. Tanpa kode ini tidak ada yang dapat masuk ke akun Anda.",
     };
   }
   return {
